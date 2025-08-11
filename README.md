@@ -7,6 +7,9 @@
 ComfyUI Workflow Manager 是一个功能强大的工作流文件管理器插件，为 ComfyUI 用户提供完整的文件系统操作功能。通过直观的图形界面，用户可以轻松管理工作流文件和文件夹，提升工作效率。
 
 <img width="1260" height="673" alt="image" src="https://github.com/user-attachments/assets/b42b6308-26ef-4ce9-98ce-a835f944cfa9" />
+<img width="815" height="671" alt="image" src="https://github.com/user-attachments/assets/c879b2b2-bdbc-44f6-86f6-f510719ca6d3" />
+
+
 
 
 
@@ -91,4 +94,5 @@ ComfyUI/user/default/workflows/
 
 
 **让工作流管理变得简单高效！** 🎨✨ 
+
 
