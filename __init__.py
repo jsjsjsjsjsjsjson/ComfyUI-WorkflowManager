@@ -304,7 +304,7 @@ async def copy_item(request):
         if os.path.isdir(source_full_path):
             shutil.copytree(source_full_path, target_full_path)
         else:
-            shutil.copy2(source_full_path, target_full_path)
+            shutil.copy(source_full_path, target_full_path)  # 改为copy，不保留元数据
             
         logging.info(f"Copied: {source_full_path} -> {target_full_path}")
         
