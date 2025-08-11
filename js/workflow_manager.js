@@ -29,18 +29,31 @@ function waitForComfyAPI() {
     });
 }
 
+/* 添加自定义图标样式 */
+function addCustomIconStyles() {
+    // 使用官方图标，不需要自定义样式
+    return;
+}
+
+
 app.registerExtension({
     name: `Comfy.${PLUGIN_NAME}`,
     
     async setup() {
         console.log(`${PLUGIN_NAME}: Setting up...`);
         
-        await waitForComfyAPI();
+        // 先添加自定义图标样式
+        addCustomIconStyles();
         
-        // 延迟创建侧边栏标签
-        setTimeout(() => {
-            createWorkflowManagerTab();
-        }, 1000);
+        // 尝试立即创建，如果失败则稍后重试
+        if (!createWorkflowManagerTab()) {
+            await waitForComfyAPI();
+            
+            // 重试创建侧边栏标签
+            setTimeout(() => {
+                createWorkflowManagerTab();
+            }, 200);
+        }
     }
 });
 
@@ -50,24 +63,33 @@ function createWorkflowManagerTab() {
         
         if (!app.extensionManager?.registerSidebarTab) {
             console.error(`${PLUGIN_NAME}: extensionManager not available`);
-            return;
+            return false; // 返回 false 表示创建失败
         }
         
         app.extensionManager.registerSidebarTab({
             id: "workflow-manager",
-            icon: "pi pi-folder-open",
-            title: "工作流管理器",
+            icon: "pi pi-folder-plus", // 使用官方ComfyUI图标格式
+            title: "工作流管理器", 
             tooltip: "完整的工作流文件管理",
             type: "custom",
             render: (el) => {
+                console.log(`${PLUGIN_NAME}: Rendering workflow manager interface`);
                 createManagerInterface(el);
-            },
+                
+                // 简化：渲染完成后直接加载数据
+                setTimeout(() => {
+                    console.log(`${PLUGIN_NAME}: Interface rendered, loading root directory`);
+                    loadDirectory('');
+                }, 200);
+            }
         });
         
         console.log(`${PLUGIN_NAME}: Tab created successfully`);
+        return true; // 返回 true 表示创建成功
         
     } catch (error) {
         console.error(`${PLUGIN_NAME}: Failed to create tab:`, error);
+        return false; // 返回 false 表示创建失败
     }
 }
 
@@ -177,10 +199,8 @@ function createManagerInterface(container) {
     // 绑定事件
     bindManagerEvents(container);
     
-    // 初始化加载
-    loadDirectory('');
-    
-    managerState.isInitialized = true;
+    // 简化：界面创建完成
+    console.log(`${PLUGIN_NAME}: Interface created successfully`);
 }
 
 function addManagerStyles() {
@@ -519,11 +539,46 @@ function bindManagerEvents(container) {
     // 搜索功能
     const searchInput = container.querySelector('#searchInput');
     let searchTimeout;
+    
+    // 输入事件处理
     searchInput.addEventListener('input', (e) => {
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => {
             filterItems(e.target.value);
         }, 300);
+    });
+    
+    // 键盘事件处理 - 确保退格键等按键能正常工作
+    searchInput.addEventListener('keydown', (e) => {
+        // 允许所有标准键盘操作
+        e.stopPropagation(); // 防止事件被其他处理器拦截
+        
+        // 特别处理退格键
+        if (e.key === 'Backspace') {
+            // 确保退格键能正常工作
+            console.log(`${PLUGIN_NAME}: Backspace key pressed in search input`);
+        }
+        
+        // 处理Enter键 - 立即执行搜索
+        if (e.key === 'Enter') {
+            clearTimeout(searchTimeout);
+            filterItems(e.target.value);
+        }
+        
+        // 处理Escape键 - 清空搜索
+        if (e.key === 'Escape') {
+            e.target.value = '';
+            filterItems('');
+        }
+    });
+    
+    // 确保输入框能获得焦点
+    searchInput.addEventListener('focus', (e) => {
+        console.log(`${PLUGIN_NAME}: Search input focused`);
+    });
+    
+    searchInput.addEventListener('blur', (e) => {
+        console.log(`${PLUGIN_NAME}: Search input blurred`);
     });
     
     // 文件网格点击事件
@@ -550,10 +605,28 @@ function bindManagerEvents(container) {
 const WorkflowAPI = {
     async browse(path = '') {
         try {
-            const response = await api.fetchApi(`/workflow-manager/browse?path=${encodeURIComponent(path)}`);
-            return await response.json();
+            console.log(`${PLUGIN_NAME}: API browse request for path:`, path);
+            
+            // 检查API是否可用
+            if (!api || !api.fetchApi) {
+                throw new Error('ComfyUI API not available');
+            }
+            
+            const url = `/workflow-manager/browse?path=${encodeURIComponent(path)}`;
+            console.log(`${PLUGIN_NAME}: Fetching URL:`, url);
+            
+            const response = await api.fetchApi(url);
+            console.log(`${PLUGIN_NAME}: Response status:`, response.status);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const result = await response.json();
+            console.log(`${PLUGIN_NAME}: API response:`, result);
+            return result;
         } catch (error) {
-            console.error('Failed to browse directory:', error);
+            console.error(`${PLUGIN_NAME}: Failed to browse directory:`, error);
             return { success: false, error: error.message };
         }
     },
@@ -639,26 +712,55 @@ const WorkflowAPI = {
     }
 };
 
+// 防止重复加载的标志
+let isLoading = false;
+
 // 核心功能函数
 async function loadDirectory(path) {
+    console.log(`${PLUGIN_NAME}: ===== LOADING DIRECTORY =====`);
+    console.log(`${PLUGIN_NAME}: Path requested:`, path);
+    console.log(`${PLUGIN_NAME}: API available:`, !!api);
+    
+    // 防止重复调用
+    if (isLoading) {
+        console.log(`${PLUGIN_NAME}: Already loading, skipping duplicate request`);
+        return;
+    }
+    
+    isLoading = true;
     showLoading(true);
     
     try {
+        // 确保API可用
+        if (!api || !api.fetchApi) {
+            throw new Error('ComfyUI API not ready');
+        }
+        
+        console.log(`${PLUGIN_NAME}: Calling WorkflowAPI.browse...`);
         const result = await WorkflowAPI.browse(path);
+        console.log(`${PLUGIN_NAME}: API Result:`, result);
         
         if (result.success) {
             managerState.currentPath = path;
-            renderFileGrid(result.items);
+            console.log(`${PLUGIN_NAME}: Updated currentPath to:`, managerState.currentPath);
+            renderFileGrid(result.items || []);
             updateBreadcrumb(path);
             updateToolbar();
-            updateStatusBar(result.items.length);
+            updateStatusBar((result.items || []).length);
+            console.log(`${PLUGIN_NAME}: ===== LOADING SUCCESS =====`);
         } else {
+            console.error(`${PLUGIN_NAME}: Browse failed:`, result.error);
             showToast(`加载失败: ${result.error}`, 'error');
+            renderFileGrid([]);
         }
     } catch (error) {
+        console.error(`${PLUGIN_NAME}: Load directory error:`, error);
         showToast(`加载失败: ${error.message}`, 'error');
+        renderFileGrid([]);
     } finally {
         showLoading(false);
+        isLoading = false;
+        console.log(`${PLUGIN_NAME}: ===== LOADING FINISHED =====`);
     }
 }
 
@@ -857,6 +959,7 @@ function formatDate(timestamp) {
 
 function showLoading(show) {
     const loadingOverlay = document.querySelector('#loadingOverlay');
+    if (!loadingOverlay) return; // 界面未渲染完成时直接返回，避免报错
     loadingOverlay.style.display = show ? 'flex' : 'none';
 }
 
@@ -1412,6 +1515,11 @@ function handleKeydown(e) {
     const workflowManager = document.querySelector('.workflow-manager');
     if (!workflowManager || !workflowManager.contains(e.target)) return;
     
+    // 排除搜索输入框，让它自己处理键盘事件
+    if (e.target.id === 'searchInput' || e.target.classList.contains('search-input')) {
+        return; // 搜索输入框自己处理键盘事件，不要干扰
+    }
+    
     if (e.key === 'F2' && managerState.selectedItems.size === 1) {
         // F2 重命名
         e.preventDefault();
@@ -1434,7 +1542,7 @@ function handleKeydown(e) {
             loadWorkflow(path);
         }
     } else if (e.key === 'Backspace') {
-        // Backspace 返回上级
+        // Backspace 返回上级 (但不干扰搜索输入框)
         e.preventDefault();
         navigateBack();
     } else if (e.ctrlKey || e.metaKey) {
