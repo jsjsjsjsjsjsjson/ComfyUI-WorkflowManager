@@ -347,14 +347,114 @@ async def read_workflow(request):
         logging.error(f"Failed to read workflow: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+@PromptServer.instance.routes.get("/workflow-manager/preview")
+async def get_workflow_preview(request):
+    """获取工作流预览图"""
+    try:
+        path = request.query.get('path', '').strip()
+        if not path:
+            return web.Response(status=400, text='Path is required')
+        
+        workflows_dir = ensure_workflows_directory()
+        
+        # 构建预览图路径（将.json替换为.webp）
+        preview_path = os.path.join(workflows_dir, path.replace('.json', '.webp'))
+        
+        # 检查文件是否存在
+        if os.path.exists(preview_path):
+            # 读取webp文件
+            with open(preview_path, 'rb') as f:
+                content = f.read()
+            
+            # 返回webp图片，设置缓存头 - 禁用缓存
+            return web.Response(
+                body=content,
+                content_type='image/webp',
+                headers={
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',  # 禁用缓存
+                    'Pragma': 'no-cache',  # HTTP/1.0兼容
+                    'Expires': '0',  # 立即过期
+                    'Access-Control-Allow-Origin': '*'
+                }
+            )
+        else:
+            # 预览图不存在，尝试查找其他格式
+            # 尝试其他图片格式
+            base_path = os.path.splitext(preview_path)[0]
+            alternative_formats = ['.png', '.jpg', '.jpeg', '.gif', '.bmp']
+            
+            for ext in alternative_formats:
+                alt_path = base_path + ext
+                if os.path.exists(alt_path):
+                    # 确定正确的content-type
+                    content_type_map = {
+                        '.png': 'image/png',
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.gif': 'image/gif',
+                        '.bmp': 'image/bmp'
+                    }
+                    
+                    content_type = content_type_map.get(ext, 'image/png')
+                    
+                    with open(alt_path, 'rb') as f:
+                        content = f.read()
+                    
+                    return web.Response(
+                        body=content,
+                        content_type=content_type,
+                        headers={
+                            'Cache-Control': 'no-cache, no-store, must-revalidate',  # 禁用缓存
+                            'Pragma': 'no-cache',  # HTTP/1.0兼容
+                            'Expires': '0',  # 立即过期
+                            'Access-Control-Allow-Origin': '*'
+                        }
+                    )
+            
+            # 如果都没有找到，返回404
+            return web.Response(status=404, text='Preview not found')
+                
+    except Exception as e:
+        logging.error(f"Failed to serve preview: {e}")
+        return web.Response(status=500, text='Internal server error')
+
+@PromptServer.instance.routes.post("/workflow-manager/upload-preview")
+async def upload_workflow_preview(request):
+    """上传工作流预览图"""
+    try:
+        data = await request.post()
+        workflow_path = data.get('workflow_path', '').strip()
+        preview_file = data.get('preview_file')
+        
+        if not workflow_path or not preview_file:
+            return web.json_response({"success": False, "error": "参数不完整"}, status=400)
+        
+        workflows_dir = ensure_workflows_directory()
+        workflow_full_path = os.path.join(workflows_dir, workflow_path)
+        
+        if not is_safe_path(workflows_dir, workflow_full_path):
+            return web.json_response({"success": False, "error": "无效的路径"}, status=400)
+        
+        if not os.path.exists(workflow_full_path):
+            return web.json_response({"success": False, "error": "工作流文件不存在"}, status=404)
+        
+        # 构建预览图路径（将.json替换为.webp）
+        preview_path = workflow_full_path.replace('.json', '.webp')
+        
+        # 保存预览图文件
+        with open(preview_path, 'wb') as f:
+            f.write(preview_file.file.read())
+        
+        logging.info(f"Uploaded preview for: {workflow_path}")
+        
+        return web.json_response({"success": True})
+        
+    except Exception as e:
+        logging.error(f"Failed to upload preview: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 def setup():
     print(f"🚀 ComfyUI Workflow Manager v{__version__} loaded!")
-    print("📁 Features:")
-    print("   • Complete file system operations (create, rename, move, copy, delete)")
-    print("   • Directory browsing with breadcrumb navigation")
-    print("   • Workflow file management and preview")
-    print("   • Drag-and-drop interface")
-    print(f"   • Workflows directory: {get_workflows_directory()}")
     
     # 确保工作流目录存在
     try:
