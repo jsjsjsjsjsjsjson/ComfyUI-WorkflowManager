@@ -31,11 +31,70 @@ def ensure_workflows_directory():
     os.makedirs(workflows_dir, exist_ok=True)
     return workflows_dir
 
+def get_config_path():
+    """获取配置文件路径"""
+    plugin_dir = os.path.dirname(__file__)
+    return os.path.join(plugin_dir, '.workflow_manager_config.json')
+
+def load_config():
+    """加载配置文件"""
+    config_path = get_config_path()
+    default_config = {
+        'viewMode': 'list',  # 默认列表视图
+        'sortBy': 'name',
+        'sortOrder': 'asc'
+    }
+    
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                # 合并默认配置，确保所有配置项都存在
+                return {**default_config, **config}
+        else:
+            return default_config
+    except Exception as e:
+        logging.warning(f"Failed to load config: {e}")
+        return default_config
+
+def save_config(config):
+    """保存配置文件"""
+    try:
+        config_path = get_config_path()
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        logging.error(f"Failed to save config: {e}")
+        return False
+
 def is_safe_path(base_path, target_path):
     """检查路径是否安全，防止目录遍历攻击"""
     base_path = os.path.abspath(base_path)
     target_path = os.path.abspath(target_path)
     return target_path.startswith(base_path)
+
+@PromptServer.instance.routes.post("/workflow-manager/save-view-mode")
+async def save_view_mode(request):
+    """保存视图模式"""
+    try:
+        data = await request.json()
+        view_mode = data.get('viewMode', 'list')
+        
+        # 加载现有配置
+        config = load_config()
+        config['viewMode'] = view_mode
+        
+        success = save_config(config)
+        
+        if success:
+            return web.json_response({"success": True})
+        else:
+            return web.json_response({"success": False, "error": "保存视图模式失败"}, status=500)
+            
+    except Exception as e:
+        logging.error(f"Failed to save view mode: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 @PromptServer.instance.routes.get("/workflow-manager/browse")
 async def browse_directory(request):
@@ -94,7 +153,8 @@ async def browse_directory(request):
         return web.json_response({
             "success": True,
             "current_path": path,
-            "items": items
+            "items": items,
+            "config": load_config()  # 添加配置信息
         })
         
     except Exception as e:
@@ -145,6 +205,7 @@ async def rename_item(request):
         data = await request.json()
         old_path = data.get('old_path', '').strip()
         new_name = data.get('new_name', '').strip()
+        sync_preview = data.get('sync_preview', True)  # 默认同步重命名预览图
         
         if not old_path or not new_name:
             return web.json_response({"success": False, "error": "路径和新名称不能为空"}, status=400)
@@ -169,8 +230,38 @@ async def rename_item(request):
         if os.path.exists(new_full_path):
             return web.json_response({"success": False, "error": "目标名称已存在"}, status=409)
         
+        # 如果是JSON工作流文件，查找并准备重命名预览图文件
+        preview_files_to_rename = []
+        if sync_preview and not os.path.isdir(old_full_path) and old_path.lower().endswith('.json'):
+            preview_extensions = ['.webp', '.png', '.jpg', '.jpeg', '.gif', '.bmp']
+            old_base_path = os.path.splitext(old_full_path)[0]
+            
+            # 确保新名称包含.json扩展名
+            if not new_name.lower().endswith('.json'):
+                new_name_with_ext = new_name + '.json'
+                new_full_path = os.path.join(parent_dir, new_name_with_ext)
+            else:
+                new_name_with_ext = new_name
+                
+            new_base_path = os.path.splitext(new_full_path)[0]
+            
+            for ext in preview_extensions:
+                old_preview_path = old_base_path + ext
+                if os.path.exists(old_preview_path):
+                    new_preview_path = new_base_path + ext
+                    preview_files_to_rename.append((old_preview_path, new_preview_path))
+        
+        # 重命名主文件或文件夹
         os.rename(old_full_path, new_full_path)
         logging.info(f"Renamed: {old_full_path} -> {new_full_path}")
+        
+        # 重命名对应的预览图文件
+        for old_preview, new_preview in preview_files_to_rename:
+            try:
+                os.rename(old_preview, new_preview)
+                logging.info(f"Renamed preview: {old_preview} -> {new_preview}")
+            except Exception as e:
+                logging.warning(f"Failed to rename preview {old_preview}: {e}")
         
         return web.json_response({
             "success": True, 
@@ -187,6 +278,7 @@ async def delete_item(request):
     try:
         data = await request.json()
         item_path = data.get('path', '').strip()
+        sync_preview = data.get('sync_preview', True)  # 默认同步删除预览图
         
         if not item_path:
             return web.json_response({"success": False, "error": "路径不能为空"}, status=400)
@@ -200,12 +292,33 @@ async def delete_item(request):
         if not os.path.exists(full_path):
             return web.json_response({"success": False, "error": "文件或文件夹不存在"}, status=404)
         
+        # 如果是JSON工作流文件，记录预览图路径
+        preview_files_to_delete = []
+        if sync_preview and not os.path.isdir(full_path) and item_path.lower().endswith('.json'):
+            # 查找对应的预览图文件
+            preview_extensions = ['.webp', '.png', '.jpg', '.jpeg', '.gif', '.bmp']
+            base_path = os.path.splitext(full_path)[0]
+            
+            for ext in preview_extensions:
+                preview_path = base_path + ext
+                if os.path.exists(preview_path):
+                    preview_files_to_delete.append(preview_path)
+        
+        # 删除主文件或文件夹
         if os.path.isdir(full_path):
             shutil.rmtree(full_path)
         else:
             os.remove(full_path)
             
         logging.info(f"Deleted: {full_path}")
+        
+        # 删除对应的预览图文件
+        for preview_path in preview_files_to_delete:
+            try:
+                os.remove(preview_path)
+                logging.info(f"Deleted preview: {preview_path}")
+            except Exception as e:
+                logging.warning(f"Failed to delete preview {preview_path}: {e}")
         
         return web.json_response({"success": True})
         
@@ -220,6 +333,7 @@ async def move_item(request):
         data = await request.json()
         source_path = data.get('source_path', '').strip()
         target_dir = data.get('target_dir', '').strip()
+        sync_preview = data.get('sync_preview', True)  # 默认同步移动预览图
         
         if not source_path:
             return web.json_response({"success": False, "error": "源路径不能为空"}, status=400)
@@ -247,8 +361,30 @@ async def move_item(request):
         if os.path.exists(target_full_path):
             return web.json_response({"success": False, "error": "目标位置已存在同名项目"}, status=409)
         
+        # 如果是JSON工作流文件，查找并准备移动预览图文件
+        preview_files_to_move = []
+        if sync_preview and not os.path.isdir(source_full_path) and source_path.lower().endswith('.json'):
+            preview_extensions = ['.webp', '.png', '.jpg', '.jpeg', '.gif', '.bmp']
+            source_base_path = os.path.splitext(source_full_path)[0]
+            target_base_path = os.path.splitext(target_full_path)[0]
+            
+            for ext in preview_extensions:
+                source_preview_path = source_base_path + ext
+                if os.path.exists(source_preview_path):
+                    target_preview_path = target_base_path + ext
+                    preview_files_to_move.append((source_preview_path, target_preview_path))
+        
+        # 移动主文件或文件夹
         shutil.move(source_full_path, target_full_path)
         logging.info(f"Moved: {source_full_path} -> {target_full_path}")
+        
+        # 移动对应的预览图文件
+        for source_preview, target_preview in preview_files_to_move:
+            try:
+                shutil.move(source_preview, target_preview)
+                logging.info(f"Moved preview: {source_preview} -> {target_preview}")
+            except Exception as e:
+                logging.warning(f"Failed to move preview {source_preview}: {e}")
         
         return web.json_response({
             "success": True,
@@ -266,6 +402,7 @@ async def copy_item(request):
         data = await request.json()
         source_path = data.get('source_path', '').strip()
         target_dir = data.get('target_dir', '').strip()
+        sync_preview = data.get('sync_preview', True)  # 默认同步复制预览图
         
         if not source_path:
             return web.json_response({"success": False, "error": "源路径不能为空"}, status=400)
@@ -293,6 +430,7 @@ async def copy_item(request):
         # 如果目标已存在，自动重命名
         counter = 1
         base_name, ext = os.path.splitext(source_name)
+        original_target_full_path = target_full_path
         while os.path.exists(target_full_path):
             if ext:
                 new_name = f"{base_name}_copy{counter}{ext}"
@@ -301,12 +439,34 @@ async def copy_item(request):
             target_full_path = os.path.join(target_full_dir, new_name)
             counter += 1
         
+        # 如果是JSON工作流文件，查找并准备复制预览图文件
+        preview_files_to_copy = []
+        if sync_preview and not os.path.isdir(source_full_path) and source_path.lower().endswith('.json'):
+            preview_extensions = ['.webp', '.png', '.jpg', '.jpeg', '.gif', '.bmp']
+            source_base_path = os.path.splitext(source_full_path)[0]
+            target_base_path = os.path.splitext(target_full_path)[0]
+            
+            for ext_preview in preview_extensions:
+                source_preview_path = source_base_path + ext_preview
+                if os.path.exists(source_preview_path):
+                    target_preview_path = target_base_path + ext_preview
+                    preview_files_to_copy.append((source_preview_path, target_preview_path))
+        
+        # 复制主文件或文件夹
         if os.path.isdir(source_full_path):
             shutil.copytree(source_full_path, target_full_path)
         else:
             shutil.copy(source_full_path, target_full_path)  # 改为copy，不保留元数据
             
         logging.info(f"Copied: {source_full_path} -> {target_full_path}")
+        
+        # 复制对应的预览图文件
+        for source_preview, target_preview in preview_files_to_copy:
+            try:
+                shutil.copy(source_preview, target_preview)
+                logging.info(f"Copied preview: {source_preview} -> {target_preview}")
+            except Exception as e:
+                logging.warning(f"Failed to copy preview {source_preview}: {e}")
         
         return web.json_response({
             "success": True,
@@ -451,6 +611,139 @@ async def upload_workflow_preview(request):
         
     except Exception as e:
         logging.error(f"Failed to upload preview: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+@PromptServer.instance.routes.post("/workflow-manager/upload-workflow")
+async def upload_workflow_file(request):
+    """上传工作流文件"""
+    try:
+        reader = await request.multipart()
+        workflow_files = []
+        target_dir = ''
+        create_dirs = False
+        
+        # 解析multipart数据
+        field = await reader.next()
+        while field is not None:
+            if field.name == 'target_dir':
+                target_dir = (await field.read()).decode('utf-8').strip()
+            elif field.name == 'create_dirs':
+                create_dirs = (await field.read()).decode('utf-8').strip().lower() == 'true'
+            elif field.name == 'workflow_files':
+                if hasattr(field, 'filename') and field.filename:
+                    # 验证文件扩展名
+                    if not field.filename.lower().endswith('.json'):
+                        return web.json_response({
+                            "success": False, 
+                            "error": f"不支持的文件类型: {field.filename}。只支持.json文件"
+                        }, status=400)
+                    
+                    # 读取文件内容
+                    content = await field.read()
+                    
+                    # 验证JSON格式
+                    try:
+                        json.loads(content.decode('utf-8'))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        return web.json_response({
+                            "success": False, 
+                            "error": f"无效的JSON文件: {field.filename}"
+                        }, status=400)
+                    
+                    workflow_files.append({
+                        'filename': field.filename,
+                        'content': content
+                    })
+            
+            field = await reader.next()
+        
+        if not workflow_files:
+            return web.json_response({"success": False, "error": "没有有效的工作流文件"}, status=400)
+        
+        workflows_dir = ensure_workflows_directory()
+        
+        # 确定目标目录
+        if target_dir:
+            target_full_dir = os.path.join(workflows_dir, target_dir)
+        else:
+            target_full_dir = workflows_dir
+        
+        # 安全检查
+        if not is_safe_path(workflows_dir, target_full_dir):
+            return web.json_response({"success": False, "error": "无效的目标路径"}, status=400)
+        
+        # 如果允许创建目录且目录不存在，则创建它
+        if create_dirs and not os.path.exists(target_full_dir):
+            try:
+                os.makedirs(target_full_dir, exist_ok=True)
+                logging.info(f"Created directory: {target_full_dir}")
+            except Exception as e:
+                return web.json_response({
+                    "success": False, 
+                    "error": f"无法创建目录 {target_dir}: {str(e)}"
+                }, status=500)
+        
+        # 确保目标目录存在
+        if not os.path.exists(target_full_dir):
+            return web.json_response({"success": False, "error": "目标目录不存在"}, status=404)
+        
+        uploaded_files = []
+        errors = []
+        
+        for file_info in workflow_files:
+            filename = file_info['filename']
+            content = file_info['content']
+            
+            # 构建目标文件路径
+            target_file_path = os.path.join(target_full_dir, filename)
+            
+            # 如果文件已存在，自动重命名
+            counter = 1
+            base_name, ext = os.path.splitext(filename)
+            while os.path.exists(target_file_path):
+                new_filename = f"{base_name}_{counter}{ext}"
+                target_file_path = os.path.join(target_full_dir, new_filename)
+                counter += 1
+            
+            try:
+                # 保存文件
+                with open(target_file_path, 'wb') as f:
+                    f.write(content)
+                
+                final_filename = os.path.basename(target_file_path)
+                relative_path = os.path.relpath(target_file_path, workflows_dir).replace('\\', '/')
+                
+                uploaded_files.append({
+                    'filename': final_filename,
+                    'path': relative_path
+                })
+                
+                logging.info(f"Uploaded workflow file: {target_file_path}")
+                
+            except Exception as e:
+                errors.append(f"{filename}: {str(e)}")
+                logging.error(f"Failed to save workflow file {filename}: {e}")
+        
+        if uploaded_files:
+            message = f"成功上传 {len(uploaded_files)} 个工作流文件"
+            if errors:
+                message += f"，{len(errors)} 个失败"
+            
+            return web.json_response({
+                "success": True,
+                "message": message,
+                "uploaded_files": uploaded_files,
+                "uploaded": len(uploaded_files),
+                "errors": errors
+            })
+        else:
+            return web.json_response({
+                "success": False, 
+                "error": f"所有文件上传失败: {'; '.join(errors)}"
+            }, status=500)
+        
+    except Exception as e:
+        logging.error(f"Failed to upload workflow files: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 def setup():

@@ -6,7 +6,6 @@ import { app } from "../../../scripts/app.js";
 import { 
     PLUGIN_NAME, 
     managerState, 
-    formatFileSize, 
     formatDate, 
     sortItems,
     showToast, 
@@ -24,7 +23,6 @@ let isLoading = false;
 const WorkflowAPI = {
     async browse(path = '') {
         try {
-            console.log(`${PLUGIN_NAME}: API browse request for path:`, path);
             
             // 检查API是否可用
             if (!api || !api.fetchApi) {
@@ -32,17 +30,14 @@ const WorkflowAPI = {
             }
             
             const url = `/workflow-manager/browse?path=${encodeURIComponent(path)}`;
-            console.log(`${PLUGIN_NAME}: Fetching URL:`, url);
             
             const response = await api.fetchApi(url);
-            console.log(`${PLUGIN_NAME}: Response status:`, response.status);
             
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
             
             const result = await response.json();
-            console.log(`${PLUGIN_NAME}: API response:`, result);
             return result;
         } catch (error) {
             console.error(`${PLUGIN_NAME}: Failed to browse directory:`, error);
@@ -62,10 +57,7 @@ const WorkflowAPI = {
 };
 
 // 核心目录加载函数
-async function loadDirectory(path) {
-    console.log(`${PLUGIN_NAME}: ===== LOADING DIRECTORY =====`);
-    console.log(`${PLUGIN_NAME}: Path requested:`, path);
-    console.log(`${PLUGIN_NAME}: API available:`, !!api);
+async function loadDirectory(path, skipViewModeApply = false) {
     
     // 防止重复调用
     if (isLoading) {
@@ -83,36 +75,45 @@ async function loadDirectory(path) {
             throw new Error('ComfyUI API not ready');
         }
         
-        console.log(`${PLUGIN_NAME}: Calling WorkflowAPI.browse...`);
         const result = await WorkflowAPI.browse(path);
-        console.log(`${PLUGIN_NAME}: API Result:`, result);
         
         if (result.success) {
             managerState.currentPath = path;
-            console.log(`${PLUGIN_NAME}: Updated currentPath to:`, managerState.currentPath);
-            renderFileGrid(result.items || []);
+            
+            // 保存当前路径
+            import('./workflow_ui.js').then(({ saveLastPath }) => {
+                saveLastPath(path);
+            });
+            
+            // 如果有配置信息且未跳过视图模式应用，则应用视图模式
+            if (result.config && !skipViewModeApply) {
+                // 动态导入 applyViewMode 函数
+                import('./workflow_ui.js').then(({ applyViewMode }) => {
+                    applyViewMode(result.config);
+                });
+            }
+            
+            await renderFileGrid(result.items || []);
             updateBreadcrumb(path);
             updateToolbar();
             updateStatusBar((result.items || []).length);
-            console.log(`${PLUGIN_NAME}: ===== LOADING SUCCESS =====`);
         } else {
             console.error(`${PLUGIN_NAME}: Browse failed:`, result.error);
             showToast(`加载失败: ${result.error}`, 'error');
-            renderFileGrid([]);
+            await renderFileGrid([]);
         }
     } catch (error) {
         console.error(`${PLUGIN_NAME}: Load directory error:`, error);
         showToast(`加载失败: ${error.message}`, 'error');
-        renderFileGrid([]);
+        await renderFileGrid([]);
     } finally {
         showLoading(false);
         isLoading = false;
-        console.log(`${PLUGIN_NAME}: ===== LOADING FINISHED =====`);
     }
 }
 
 // 渲染文件网格
-function renderFileGrid(items) {
+async function renderFileGrid(items) {
     const fileGrid = document.querySelector('#fileGrid');
     const emptyState = document.querySelector('#emptyState');
     
@@ -127,6 +128,15 @@ function renderFileGrid(items) {
     
     if (!fileGrid) return;
     
+    // 保存已展开文件夹的子项内容
+    const expandedContents = new Map();
+    managerState.expandedFolders.forEach(folderPath => {
+        const childItems = Array.from(document.querySelectorAll(`[data-parent-path="${folderPath}"]`));
+        if (childItems.length > 0) {
+            expandedContents.set(folderPath, childItems.map(item => item.outerHTML));
+        }
+    });
+    
     // 排序
     const sortedItems = sortItems(items);
     
@@ -137,7 +147,7 @@ function renderFileGrid(items) {
         
         const meta = isFolder 
             ? `${item.workflow_count} 个工作流` 
-            : `${formatFileSize(item.size)} • ${formatDate(item.modified)}`;
+            : `${formatDate(item.modified)}`;
         
         // 检查是否在列表视图模式下
         const isListView = fileGrid.classList.contains('list-view');
@@ -173,9 +183,88 @@ function renderFileGrid(items) {
         rebindExpandIconEvents();
     }
     
-    // 如果开启预览模式，加载预览图
-    if (managerState.previewMode) {
+    // 如果是网格视图，加载预览图
+    if (!fileGrid.classList.contains('list-view')) {
         loadPreviewsForWorkflows();
+    }
+    
+    // 重新获取并恢复已展开文件夹的最新内容
+    for (const folderPath of managerState.expandedFolders) {
+        try {
+            // 重新获取文件夹内容
+            const result = await WorkflowAPI.browse(folderPath);
+            if (result.success && result.items && result.items.length > 0) {
+                // 先删除旧的子项目
+                const existingChildren = document.querySelectorAll(`[data-parent-path="${folderPath}"]`);
+                existingChildren.forEach(child => child.remove());
+                
+                // 添加新的子项目
+                const folderItem = document.querySelector(`[data-path="${folderPath}"]`);
+                if (folderItem) {
+                    let insertAfter = folderItem;
+                    
+                    result.items.forEach((item, index) => {
+                        const isFolder = item.type === 'directory';
+                        const iconClass = isFolder ? 'folder' : 'workflow';
+                        const icon = isFolder ? 'pi-folder' : 'pi-file';
+                        
+                        const meta = isFolder 
+                            ? `${item.workflow_count} 个工作流` 
+                            : `${formatDate(item.modified)}`;
+                        
+                        // 子文件夹也可以展开
+                        const expandIcon = isFolder 
+                            ? `<i class="folder-expand-icon pi pi-chevron-right" data-path="${item.path}" title="展开文件夹"></i>` 
+                            : '';
+                        
+                        const childItem = document.createElement('div');
+                        childItem.className = 'file-item child-item';
+                        childItem.dataset.path = item.path;
+                        childItem.dataset.name = item.name;
+                        childItem.dataset.type = item.type;
+                        childItem.dataset.parentPath = folderPath;
+                        childItem.draggable = true;
+                        
+                        childItem.innerHTML = `
+                            ${expandIcon}
+                            <div class="file-icon-container">
+                                <i class="file-icon ${iconClass} pi ${icon}"></i>
+                            </div>
+                            <div class="file-name">${item.name}</div>
+                            <div class="file-meta">${meta}</div>
+                        `;
+                        
+                        insertAfter.insertAdjacentElement('afterend', childItem);
+                        insertAfter = childItem;
+                        
+                        // 立即为新创建的子项目绑定事件
+                        window.dispatchEvent(new CustomEvent('workflowManager:rebindChildItem', { 
+                            detail: { element: childItem } 
+                        }));
+                    });
+                }
+            } else {
+                // 如果文件夹为空，移除所有子项目
+                const existingChildren = document.querySelectorAll(`[data-parent-path="${folderPath}"]`);
+                existingChildren.forEach(child => child.remove());
+            }
+        } catch (error) {
+            console.error(`${PLUGIN_NAME}: Failed to refresh expanded folder ${folderPath}:`, error);
+        }
+    }
+    
+    // 恢复已展开文件夹的图标状态
+    managerState.expandedFolders.forEach(folderPath => {
+        const expandIcon = document.querySelector(`[data-path="${folderPath}"] .folder-expand-icon`);
+        if (expandIcon) {
+            expandIcon.classList.remove('pi-chevron-right');
+            expandIcon.classList.add('pi-chevron-down');
+        }
+    });
+    
+    // 重新绑定事件
+    if (managerState.expandedFolders.size > 0) {
+        rebindExpandIconEvents();
     }
 }
 
@@ -217,51 +306,53 @@ async function expandFolderContent(folderPath) {
         }
         
         showLoading(true);
-        
-        // 获取文件夹内容
         const result = await WorkflowAPI.browse(folderPath);
         
-        if (result.success) {
+        if (result.success && result.items && result.items.length > 0) {
+            // 不创建容器，直接插入子项目
             const folderItem = document.querySelector(`[data-path="${folderPath}"]`);
-            if (!folderItem) return;
             
-            // 创建子内容容器
-            const childrenContainer = document.createElement('div');
-            childrenContainer.className = 'folder-children';
-            childrenContainer.dataset.parentPath = folderPath;
-            
-            // 渲染子项目
-            const sortedItems = sortItems(result.items || []);
-            childrenContainer.innerHTML = sortedItems.map(item => {
+            // 渲染子项目并直接插入到文件夹后面
+            result.items.forEach((item, index) => {
                 const isFolder = item.type === 'directory';
                 const iconClass = isFolder ? 'folder' : 'workflow';
                 const icon = isFolder ? 'pi-folder' : 'pi-file';
                 
                 const meta = isFolder 
                     ? `${item.workflow_count} 个工作流` 
-                    : `${formatFileSize(item.size)} • ${formatDate(item.modified)}`;
+                    : `${formatDate(item.modified)}`;
                 
                 // 子文件夹也可以展开
                 const expandIcon = isFolder 
                     ? `<i class="folder-expand-icon pi pi-chevron-right" data-path="${item.path}" title="展开文件夹"></i>` 
                     : '';
                 
-                return `
-                    <div class="file-item child-item" 
-                         data-path="${item.path}" 
-                         data-name="${item.name}"
-                         data-type="${item.type}"
-                         draggable="true">
-                        ${expandIcon}
+                const childItem = document.createElement('div');
+                childItem.className = 'file-item child-item';
+                childItem.dataset.path = item.path;
+                childItem.dataset.name = item.name;
+                childItem.dataset.type = item.type;
+                childItem.dataset.parentPath = folderPath;
+                childItem.draggable = true;
+                
+                childItem.innerHTML = `
+                    ${expandIcon}
+                    <div class="file-icon-container">
                         <i class="file-icon ${iconClass} pi ${icon}"></i>
-                        <div class="file-name">${item.name}</div>
-                        <div class="file-meta">${meta}</div>
                     </div>
+                    <div class="file-name">${item.name}</div>
+                    <div class="file-meta">${meta}</div>
                 `;
-            }).join('');
-            
-            // 插入到文件夹项目后面
-            folderItem.insertAdjacentElement('afterend', childrenContainer);
+                
+                // 插入到合适的位置
+                let insertAfter = folderItem;
+                const existingChildren = document.querySelectorAll(`[data-parent-path="${folderPath}"]`);
+                if (existingChildren.length > 0) {
+                    insertAfter = existingChildren[existingChildren.length - 1];
+                }
+                
+                insertAfter.insertAdjacentElement('afterend', childItem);
+            });
             
             // 重新绑定所有展开图标的事件
             rebindExpandIconEvents();
@@ -290,6 +381,21 @@ function rebindExpandIconEvents() {
             toggleFolderExpand(newIcon.dataset.path);
         });
     });
+    
+    // 重新绑定所有子项目的事件（点击、拖拽、右键菜单等）
+    const childItems = document.querySelectorAll('.file-item.child-item');
+    childItems.forEach(item => {
+        // 确保子项目有正确的事件绑定
+        if (!item.hasAttribute('data-events-bound')) {
+            // 标记已绑定事件，避免重复绑定
+            item.setAttribute('data-events-bound', 'true');
+            
+            // 通知UI模块重新绑定这个子项目的事件
+            window.dispatchEvent(new CustomEvent('workflowManager:rebindChildItem', { 
+                detail: { element: item } 
+            }));
+        }
+    });
 }
 
 // 折叠文件夹内容
@@ -299,16 +405,20 @@ function collapseFolderContent(folderPath) {
     allExpanded.forEach(expandedPath => {
         if (expandedPath.startsWith(folderPath + '/')) {
             managerState.expandedFolders.delete(expandedPath);
+            
+            // 更新展开图标状态
+            const expandIcon = document.querySelector(`[data-path="${expandedPath}"] .folder-expand-icon`);
+            if (expandIcon) {
+                expandIcon.classList.remove('pi-chevron-down');
+                expandIcon.classList.add('pi-chevron-right');
+            }
         }
     });
     
-    // 使用更安全的方式移除DOM中的子内容
-    const allContainers = document.querySelectorAll('.folder-children');
-    
-    allContainers.forEach(container => {
-        if (container.dataset.parentPath === folderPath) {
-            container.remove();
-        }
+    // 移除所有属于这个文件夹的子项目
+    const childItems = document.querySelectorAll(`[data-parent-path="${folderPath}"]`);
+    childItems.forEach(item => {
+        item.remove();
     });
     
     showToast(`已折叠文件夹 "${folderPath}"`);
@@ -317,11 +427,9 @@ function collapseFolderContent(folderPath) {
 // 加载工作流
 async function loadWorkflow(path) {
     try {
-        console.log(`${PLUGIN_NAME}: Loading workflow from path:`, path);
         
         // 检查文件类型，只允许加载.json文件
         if (!path.toLowerCase().endsWith('.json')) {
-            console.warn(`${PLUGIN_NAME}: Attempted to load non-json file:`, path);
             showToast(`只能加载.json工作流文件`, 'warning');
             return;
         }
@@ -334,7 +442,6 @@ async function loadWorkflow(path) {
             
             // 关键修复：优先使用workflowStore.openWorkflow来直接加载现有文件
             if (app.workflowStore && typeof app.workflowStore.openWorkflow === 'function') {
-                console.log(`${PLUGIN_NAME}: Using workflowStore.openWorkflow to load existing file`);
                 
                 try {
                     const workflowObject = {
@@ -349,7 +456,6 @@ async function loadWorkflow(path) {
                     
                     await app.workflowStore.openWorkflow(workflowObject);
                     showToast(`工作流"${fileName}"已加载`);
-                    console.log(`${PLUGIN_NAME}: Workflow loaded via workflowStore:`, path);
                     return;
                 } catch (workflowStoreError) {
                     console.warn(`${PLUGIN_NAME}: workflowStore.openWorkflow failed:`, workflowStoreError);
@@ -359,16 +465,13 @@ async function loadWorkflow(path) {
             
             // 回退方案：使用ComfyUI的标准方法
             const workflowPath = path;
-            console.log(`${PLUGIN_NAME}: Using fallback method with relative workflow path:`, workflowPath);
             
             // 使用ComfyUI的标准方法：app.loadGraphData(workflow, true, true, workflowName)
             if (app.loadGraphData && typeof app.loadGraphData === 'function') {
-                console.log(`${PLUGIN_NAME}: Using app.loadGraphData with relative path`);
                 
                 try {
                     await app.loadGraphData(result.workflow, true, true, workflowPath);
                     showToast(`工作流"${fileName}"已加载`);
-                    console.log(`${PLUGIN_NAME}: Workflow loaded with relative path:`, workflowPath);
                     
                     // 验证工作流是否正确加载
                     setTimeout(() => {
@@ -517,52 +620,11 @@ function initializeEventListeners() {
     });
 }
 
-// 导出主要函数
-export {
-    WorkflowAPI,
-    loadDirectory,
-    renderFileGrid,
-    loadWorkflow,
-    initializeEventListeners,
-    toggleFolderExpand,
-    expandFolderContent,
-    collapseFolderContent,
-    rebindExpandIconEvents,
-    toggleFolderByRow,
-    fallbackToHandleFile,
-    tryFallbackMethods
-};
-
 // 预览图加载函数
 async function loadPreviewsForWorkflows() {
-    if (!managerState.previewMode) {
-        return;
-    }
-    
-    // 检查当前视图模式
+    // 检查当前视图模式 - 只在网格视图下加载预览图
     const fileGrid = document.querySelector('#fileGrid');
-    const isListView = fileGrid && fileGrid.classList.contains('list-view');
-    
-    if (isListView) {
-        // 列表视图下：隐藏所有预览图，显示图标，并恢复列表视图的样式
-        const previewPlaceholders = document.querySelectorAll('.preview-placeholder');
-        const fileIcons = document.querySelectorAll('.file-icon');
-        const fileIconContainers = document.querySelectorAll('.file-icon-container');
-        
-        previewPlaceholders.forEach(placeholder => {
-            placeholder.style.display = 'none';
-        });
-        
-        fileIcons.forEach(icon => {
-            icon.style.display = 'block';
-        });
-        
-        // 恢复列表视图下的图标容器大小
-        fileIconContainers.forEach(container => {
-            container.style.width = '32px';
-            container.style.height = '32px';
-        });
-        
+    if (fileGrid.classList.contains('list-view')) {
         return;
     }
     
@@ -608,4 +670,21 @@ async function loadPreviewsForWorkflows() {
             }
         }
     }
-} 
+}
+
+// 导出主要函数
+export {
+    WorkflowAPI,
+    loadDirectory,
+    renderFileGrid,
+    loadWorkflow,
+    initializeEventListeners,
+    toggleFolderExpand,
+    expandFolderContent,
+    collapseFolderContent,
+    rebindExpandIconEvents,
+    toggleFolderByRow,
+    fallbackToHandleFile,
+    tryFallbackMethods,
+    loadPreviewsForWorkflows
+};

@@ -12,9 +12,10 @@ function addManagerStyles() {
             display: flex;
             flex-direction: column;
             height: 100%;
-            background: var(--comfy-menu-bg, #1e1e1e);
+            background: var(--comfy-input-bg, #2d2d2d);
             color: var(--input-text, #ffffff);
             font-size: 12px;
+            position: relative; /* 为了支持拖拽样式 */
         }
         
         .manager-toolbar {
@@ -32,10 +33,7 @@ function addManagerStyles() {
         }
         
         .toolbar-center {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            min-width: 0;
+            display: none;
         }
         
         .toolbar-btn {
@@ -97,6 +95,7 @@ function addManagerStyles() {
             position: relative;
             padding: 8px;
             border-bottom: 1px solid var(--border-color, #444);
+            background: var(--comfy-input-bg, #2d2d2d);
         }
         
         .search-input {
@@ -127,6 +126,9 @@ function addManagerStyles() {
             flex: 1;
             position: relative;
             overflow: auto;
+            background: var(--comfy-input-bg, #2d2d2d);
+            height: 100%;
+            min-height: 100%;
         }
         
         .loading-overlay {
@@ -135,7 +137,7 @@ function addManagerStyles() {
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(30, 30, 30, 0.8);
+            background: var(--comfy-input-bg, #2d2d2d);
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -162,14 +164,15 @@ function addManagerStyles() {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
             gap: 8px;
-            padding: 12px;
+            padding: 8px;
+            background: var(--comfy-input-bg, #2d2d2d);
         }
         
         .file-item {
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 12px 8px;
+            padding: 4px 6px;
             border-radius: 6px;
             cursor: pointer;
             border: 2px solid transparent;
@@ -194,8 +197,8 @@ function addManagerStyles() {
         }
         
         .file-icon {
-            font-size: 32px;
-            margin-bottom: 8px;
+            font-size: 48px;
+            margin-bottom: 6px;
             color: #007acc;
         }
         
@@ -231,8 +234,8 @@ function addManagerStyles() {
         
         /* 列表视图下的图标容器样式 - 固定大小，不受预览图影响 */
         .file-grid.list-view .file-icon-container {
-            width: 20px !important;
-            height: 20px !important;
+            width: 24px !important;
+            height: 24px !important;
         }
         
         .file-grid.list-view .preview-placeholder {
@@ -240,9 +243,9 @@ function addManagerStyles() {
         }
         
         .file-grid.list-view .file-icon {
-            font-size: 14px;
+            font-size: 20px;
             margin-bottom: 0;
-            margin-right: 8px;
+            margin-right: 12px;
         }
         
         .preview-loading {
@@ -311,13 +314,14 @@ function addManagerStyles() {
         .file-name {
             text-align: center;
             word-break: break-word;
-            font-size: 11px;
+            font-size: 14px;
             line-height: 1.3;
             max-width: 100%;
+            font-weight: 500;
         }
         
         .file-meta {
-            font-size: 9px;
+            font-size: 11px;
             color: var(--descrip-text, #666);
             margin-top: 4px;
             text-align: center;
@@ -331,6 +335,7 @@ function addManagerStyles() {
             height: 200px;
             color: var(--descrip-text, #999);
             gap: 12px;
+            background: var(--comfy-input-bg, #2d2d2d);
         }
         
         .empty-state i {
@@ -491,6 +496,28 @@ function addManagerStyles() {
             z-index: 10;
         }
         
+        /* 工作流管理器容器拖拽样式 */
+        .workflow-manager.drop-zone {
+            border: 2px dashed #007acc !important;
+            background: rgba(0, 122, 204, 0.05) !important;
+            position: relative;
+        }
+        
+        .workflow-manager.drop-zone::after {
+            content: "拖放到当前目录";
+            position: absolute;
+            bottom: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 122, 204, 0.9);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 11px;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        
         /* 子文件夹拖拽增强样式 */
         .file-item.child-item.drop-zone {
             border-left: 3px solid #007acc !important;
@@ -508,13 +535,13 @@ function addManagerStyles() {
         /* 列表视图样式 */
         .file-grid.list-view {
             grid-template-columns: 1fr;
-            gap: 2px;
+            gap: 0px;
         }
         
         .file-grid.list-view .file-item {
             flex-direction: row;
             justify-content: flex-start;
-            padding: 4px 8px;
+            padding: 3px 12px;
             text-align: left;
             min-height: 28px;
         }
@@ -523,14 +550,15 @@ function addManagerStyles() {
             text-align: left;
             flex: 1;
             margin: 0;
-            font-size: 11px;
+            font-size: 14px;
             line-height: 1.2;
+            font-weight: 500;
         }
         
         .file-grid.list-view .file-meta {
             margin-top: 0;
             margin-left: auto;
-            font-size: 9px;
+            font-size: 11px;
             line-height: 1.2;
         }
         
@@ -550,52 +578,47 @@ function addManagerStyles() {
             transform: translateX(1px);
         }
         
-        /* 文件夹展开/折叠样式 */
+        /* 文件夹展开/折叠样式 - 完全隐藏 */
         .folder-expand-icon {
-            font-size: 10px;
-            margin-right: 6px;
-            cursor: pointer;
-            color: var(--descrip-text, #999);
-            transition: transform 0.2s ease, color 0.2s ease;
-            padding: 1px;
-            border-radius: 2px;
+            display: none !important;
         }
         
-        .folder-expand-icon:hover {
-            color: var(--input-text, #ffffff);
-            background: rgba(255, 255, 255, 0.1);
-        }
-        
-        .folder-expand-icon.pi-chevron-down {
-            transform: rotate(0deg);
-        }
-        
-        .folder-expand-icon.pi-chevron-right {
-            transform: rotate(0deg);
-        }
-        
-        /* 子项目容器 */
+        /* 子项目容器 - 移除T字形状，只保留简单竖线 */
         .folder-children {
-            background: rgba(0, 0, 0, 0.1);
-            border-left: 2px solid var(--border-color, #444);
-            margin-left: 20px;
-            animation: slideDown 0.2s ease-out;
+            background: transparent;
+            border-left: 1px solid var(--border-color, #444);
+            margin-left: 12px;
+            padding-left: 0;
         }
         
-        /* 子项目样式 */
+        /* 子项目样式 - 添加左侧竖线指示层级 */
         .file-item.child-item {
-            padding-left: 16px;
-            background: rgba(0, 0, 0, 0.05);
-            border-left: 1px solid var(--border-color, #333);
-            min-height: 24px;
+            padding-left: 32px;
+            background: transparent;
+            border: 2px solid transparent; /* 和主目录文件保持一致的边框 */
+            border-left: 3px solid var(--border-color, #444); /* 保持层级指示线 */
+            margin-left: 16px;
+            min-height: 28px;
+            position: relative;
+            padding-top: 2px;
+            padding-bottom: 2px;
+        }
+        
+        /* 子项目选中状态 - 更高优先级 */
+        .file-item.child-item.selected {
+            border: 2px solid #007acc !important;
+            border-left: 3px solid #007acc !important;
+            background: rgba(0, 122, 204, 0.15) !important;
+            border-radius: 4px;
         }
         
         .file-item.child-item:hover {
-            background: rgba(0, 0, 0, 0.1);
+            background: var(--comfy-menu-bg, #1e1e1e);
         }
         
-        .file-item.child-item .folder-expand-icon {
-            margin-left: 8px;
+        /* 子项目悬停时不覆盖选中状态 */
+        .file-item.child-item:hover:not(.selected) {
+            background: var(--comfy-menu-bg, #1e1e1e);
         }
         
         /* 展开动画 */
@@ -610,11 +633,6 @@ function addManagerStyles() {
                 transform: translateY(0);
                 max-height: 1000px;
             }
-        }
-        
-        /* 网格视图下隐藏展开图标 */
-        .file-grid:not(.list-view) .folder-expand-icon {
-            display: none;
         }
         
         /* 排序菜单样式 */

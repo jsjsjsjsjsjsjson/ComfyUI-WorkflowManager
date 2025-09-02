@@ -33,7 +33,6 @@ function waitForComfyAPI() {
 // 创建工作流管理器侧边栏标签
 function createWorkflowManagerTab() {
     try {
-        console.log(`${PLUGIN_NAME}: Creating workflow manager tab...`);
         
         if (!app.extensionManager?.registerSidebarTab) {
             console.error(`${PLUGIN_NAME}: extensionManager not available`);
@@ -47,7 +46,19 @@ function createWorkflowManagerTab() {
             tooltip: "完整的工作流文件管理",
             type: "custom",
             render: (el) => {
-                console.log(`${PLUGIN_NAME}: Rendering workflow manager interface`);
+                // 设置侧边栏标签页容器样式，确保占满整个高度
+                if (el.parentElement) {
+                    el.parentElement.style.height = '100%';
+                    el.parentElement.style.display = 'flex';
+                    el.parentElement.style.flexDirection = 'column';
+                }
+                
+                // 设置当前容器样式
+                el.style.height = '100%';
+                el.style.minHeight = '100vh';
+                el.style.display = 'flex';
+                el.style.flexDirection = 'column';
+                
                 createManagerInterface(el);
                 
                 // 设置loadDirectory函数引用到各个模块
@@ -58,14 +69,36 @@ function createWorkflowManagerTab() {
                 initializeUIEventListeners();
                 
                 // 渲染完成后加载数据
-                setTimeout(() => {
-                    console.log(`${PLUGIN_NAME}: Interface rendered, loading root directory`);
-    loadDirectory('');
+                setTimeout(async () => {
+
+                    // 获取配置并应用视图模式，然后再加载目录
+                    try {
+                        const response = await fetch('/workflow-manager/browse?path=');
+                        if (response.ok) {
+                            const result = await response.json();
+                            const config = result.config || {};
+                            const lastPath = config.lastPath || '';
+                            
+                            // 先应用视图模式
+                            const { applyViewMode } = await import('./workflow_ui.js');
+                            applyViewMode(config);
+                            
+                            // 等待一下确保视图模式应用完成，然后加载目录
+                            setTimeout(() => {
+                                loadDirectory(lastPath, true); // 跳过视图模式应用
+                            }, 50);
+                        } else {
+                            console.warn(`${PLUGIN_NAME}: Failed to get config, loading root`);
+                            loadDirectory('');
+                        }
+                    } catch (error) {
+                        console.error(`${PLUGIN_NAME}: Error getting last path:`, error);
+                        loadDirectory('');
+                    }
                 }, 200);
             }
         });
         
-        console.log(`${PLUGIN_NAME}: Tab created successfully`);
         return true;
         
         } catch (error) {
@@ -79,7 +112,6 @@ app.registerExtension({
     name: `Comfy.${PLUGIN_NAME}`,
     
     async setup() {
-        console.log(`${PLUGIN_NAME}: Setting up...`);
         
         // 初始化事件监听器
         initializeEventListeners();
@@ -102,7 +134,6 @@ app.registerExtension({
 
 // 设置画布拖放处理器
 function setupCanvasDropHandler() {
-    console.log(`${PLUGIN_NAME}: Setting up canvas drop handler`);
     
     // 等待画布可用
     const setupWhenReady = () => {
@@ -137,7 +168,6 @@ function setupCanvasDropHandler() {
                 const workflowPath = e.dataTransfer.getData('application/comfy-workflow-path');
                 if (workflowPath) {
         e.preventDefault();
-                    console.log(`${PLUGIN_NAME}: Workflow dropped on canvas:`, workflowPath);
                     
                     // 导入工作流到ComfyUI
                     try {
@@ -150,7 +180,6 @@ function setupCanvasDropHandler() {
                 }
             });
             
-            console.log(`${PLUGIN_NAME}: Canvas drop handler setup complete`);
             } else {
             // 画布还没准备好，稍后重试
             setTimeout(setupWhenReady, 500);
