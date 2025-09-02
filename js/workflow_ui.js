@@ -8,6 +8,7 @@ import {
     clearSelection,
     addSelection,
     toggleSelection,
+    handleItemSelection,
     selectAll,
     showToast
 } from './workflow_state.js';
@@ -62,9 +63,6 @@ function createManagerInterface(container) {
                     <button id="viewToggleBtn" class="toolbar-btn" title="切换视图">
                         <i class="pi pi-list"></i>
                     </button>
-                    <button id="previewToggleBtn" class="toolbar-btn" title="预览图模式">
-                        <i class="pi pi-image"></i>
-                    </button>
                     <button id="sortBtn" class="toolbar-btn" title="排序">
                         <i class="pi pi-sort"></i>
                     </button>
@@ -92,19 +90,6 @@ function createManagerInterface(container) {
                     <i class="pi pi-folder-open"></i>
                     <p>此文件夹为空</p>
                     <p class="empty-hint">右键点击空白处可以粘贴工作流</p>
-                </div>
-            </div>
-            
-            <!-- 状态栏 -->
-            <div class="status-bar">
-                <div class="status-left">
-                    <span id="itemCount">0 项目</span>
-                </div>
-                <div class="status-right">
-                    <span id="selectedCount"></span>
-                    <button id="authorBtn" class="author-btn" title="关于作者">
-                        <i class="pi pi-info-circle"></i>
-                    </button>
                 </div>
             </div>
         </div>
@@ -149,6 +134,23 @@ function createManagerInterface(container) {
     
     // 绑定事件
     bindManagerEvents(container);
+    
+    // 获取工作流管理器容器
+    const workflowManager = container.querySelector('.workflow-manager');
+    
+    // 确保容器可以获得焦点以接收键盘事件
+    workflowManager.tabIndex = -1;
+    workflowManager.style.outline = 'none'; // 移除焦点时的默认边框
+    
+    // 当用户点击管理器时获得焦点
+    workflowManager.addEventListener('click', () => {
+        workflowManager.focus();
+    });
+    
+    // 当管理器加载时自动获得焦点
+    setTimeout(() => {
+        workflowManager.focus();
+    }, 100);
 }
 
 // 绑定管理器事件
@@ -167,7 +169,6 @@ function bindManagerEvents(container) {
     });
     container.querySelector('#newFolderBtn').addEventListener('click', showCreateFolderDialog);
     container.querySelector('#viewToggleBtn').addEventListener('click', toggleView);
-    container.querySelector('#previewToggleBtn').addEventListener('click', togglePreviewMode);
     container.querySelector('#sortBtn').addEventListener('click', showSortMenu);
     
     // 搜索功能
@@ -211,20 +212,17 @@ function bindManagerEvents(container) {
     fileGrid.addEventListener('dblclick', handleFileGridDoubleClick);
     fileGrid.addEventListener('contextmenu', handleContextMenu);
     
-    // 拖放事件
-    fileGrid.addEventListener('dragstart', handleDragStart);
-    fileGrid.addEventListener('dragover', handleDragOver);
-    fileGrid.addEventListener('drop', handleDrop);
-    fileGrid.addEventListener('dragend', handleDragEnd);
+    // 拖放事件 - 绑定到整个标签容器
+    container.addEventListener('dragstart', handleDragStart);
+    container.addEventListener('dragover', handleDragOver);
+    container.addEventListener('drop', handleDrop);
+    container.addEventListener('dragend', handleDragEnd);
     
     // 全局事件
     document.addEventListener('click', hideContextMenu);
     
     // 面包屑导航事件
     container.querySelector('#breadcrumb').addEventListener('click', handleBreadcrumbClick);
-    
-    // 作者信息按钮事件
-    container.querySelector('#authorBtn').addEventListener('click', showAuthorInfo);
     
     // 添加滚动事件监听，实现预览图懒加载
     const managerContent = container.querySelector('#managerContent');
@@ -268,20 +266,38 @@ function bindManagerEvents(container) {
         // 为空文件夹区域添加拖拽支持
         emptyState.addEventListener('dragover', (e) => {
             e.preventDefault();
+            e.stopPropagation(); // 阻止事件冒泡到ComfyUI画布
             emptyState.classList.add('drop-zone');
             e.dataTransfer.dropEffect = 'copy';
         });
         
         emptyState.addEventListener('dragleave', (e) => {
             e.preventDefault();
+            e.stopPropagation(); // 阻止事件冒泡
             emptyState.classList.remove('drop-zone');
         });
         
         emptyState.addEventListener('drop', (e) => {
             e.preventDefault();
+            e.stopPropagation(); // 阻止事件冒泡到ComfyUI画布
             emptyState.classList.remove('drop-zone');
             
-            // 处理拖拽的工作流文件
+            // 检查是否是外部文件拖拽
+            const items = e.dataTransfer.items;
+            const files = e.dataTransfer.files;
+            
+            if ((items && items.length > 0) || (files && files.length > 0)) {
+                // 外部文件拖拽 - 使用 handleExternalFileDrop
+                const droppedItems = items && items.length > 0 ? Array.from(items) : Array.from(files);
+                
+                // 动态导入 handleExternalFileDrop 函数
+                import('./workflow_operations.js').then(module => {
+                    module.handleExternalFileDrop(droppedItems, managerState.currentPath);
+                });
+                return;
+            }
+            
+            // 处理内部拖拽的工作流文件
             const draggedItems = JSON.parse(e.dataTransfer.getData('text/plain') || '[]');
             if (draggedItems.length > 0) {
                 // 触发粘贴操作
@@ -317,14 +333,23 @@ function handleBreadcrumbClick(e) {
 
 // 键盘事件处理
 function handleKeydown(e) {
-    // 只在管理器获得焦点时处理键盘事件
+    // 检查焦点状态并处理键盘事件
     const workflowManager = document.querySelector('.workflow-manager');
-    if (!workflowManager || !workflowManager.contains(e.target)) return;
+    
+    // 更宽松的焦点检查：如果管理器可见且用户没有在其他输入框中，就允许键盘操作
+    if (!workflowManager || 
+        (!workflowManager.contains(e.target) && 
+         !workflowManager.contains(document.activeElement) &&
+         document.activeElement !== workflowManager &&
+         document.activeElement !== document.body)) {
+        return;
+    }
     
     // 排除搜索输入框，让它自己处理键盘事件
     if (e.target.id === 'searchInput' || e.target.classList.contains('search-input')) {
         return; // 搜索输入框自己处理键盘事件，不要干扰
     }
+    
     
     if (e.key === 'F2' && managerState.selectedItems.size === 1) {
         // F2 重命名
@@ -365,6 +390,7 @@ function handleKeydown(e) {
                 // Ctrl+C 复制
                 if (managerState.selectedItems.size > 0) {
                     e.preventDefault();
+                    e.stopPropagation(); // 防止事件冒泡造成重复处理
                     window.dispatchEvent(new CustomEvent('workflowManager:contextAction', { detail: { action: 'copy' } }));
                 }
                 break;
@@ -372,6 +398,7 @@ function handleKeydown(e) {
                 // Ctrl+X 剪切
                 if (managerState.selectedItems.size > 0) {
                     e.preventDefault();
+                    e.stopPropagation(); // 防止事件冒泡造成重复处理
                     window.dispatchEvent(new CustomEvent('workflowManager:contextAction', { detail: { action: 'cut' } }));
                 }
                 break;
@@ -379,6 +406,7 @@ function handleKeydown(e) {
                 // Ctrl+V 粘贴
                 if (managerState.clipboardItem && managerState.clipboardItem.length > 0) {
                     e.preventDefault();
+                    e.stopPropagation(); // 防止事件冒泡造成重复处理
                     window.dispatchEvent(new CustomEvent('workflowManager:contextAction', { detail: { action: 'paste' } }));
                 }
                 break;
@@ -399,6 +427,13 @@ function handleFileGridClick(e) {
         return;
     }
     
+    // 检查是否是子文件项（有父级folder-children容器）
+    const isChildItem = fileItem.closest('.folder-children');
+    if (isChildItem) {
+        // 子文件项有自己的事件处理，不在这里处理
+        return;
+    }
+    
     const path = fileItem.dataset.path;
     const type = fileItem.dataset.type;
     
@@ -411,16 +446,15 @@ function handleFileGridClick(e) {
             window.dispatchEvent(new CustomEvent('workflowManager:toggleFolder', {
                 detail: { path: path }
             }));
-            return; // 不执行选择逻辑
+            
+            // 展开的同时也选中该文件夹
+            handleItemSelection(path, e);
+            return;
         }
     }
     
-    if (e.ctrlKey || e.metaKey) {
-        toggleSelection(path);
-    } else {
-        clearSelection();
-        addSelection(path);
-    }
+    // 使用新的选择处理逻辑
+    handleItemSelection(path, e);
 }
 
 // 文件网格双击事件处理
@@ -430,9 +464,12 @@ function handleFileGridDoubleClick(e) {
     
     const path = fileItem.dataset.path;
     const type = fileItem.dataset.type;
+    const fileGrid = document.querySelector('#fileGrid');
+    const isListView = fileGrid && fileGrid.classList.contains('list-view');
     
     if (type === 'directory') {
-        if (loadDirectoryRef) {
+        // 在列表视图下不允许双击打开文件夹
+        if (!isListView && loadDirectoryRef) {
             loadDirectoryRef(path);
         }
     } else if (type === 'workflow') {
@@ -481,18 +518,18 @@ function handleContextMenu(e) {
             }
         }
         
-        // 刷新预览图选项 - 只对工作流文件且在预览模式下显示
+        // 刷新预览图选项 - 只对工作流文件且在网格视图下显示
         if (refreshPreviewMenuItem) {
-            if (type === 'workflow' && path.toLowerCase().endsWith('.json') && managerState.previewMode && !fileGrid.classList.contains('list-view')) {
+            if (type === 'workflow' && path.toLowerCase().endsWith('.json') && !fileGrid.classList.contains('list-view')) {
                 refreshPreviewMenuItem.style.display = 'block';
             } else {
                 refreshPreviewMenuItem.style.display = 'none';
             }
         }
         
-        // 更换预览图选项 - 只对工作流文件且在预览模式下显示
+        // 更换预览图选项 - 只对工作流文件且在网格视图下显示
         if (changePreviewMenuItem) {
-            if (type === 'workflow' && path.toLowerCase().endsWith('.json') && managerState.previewMode && !fileGrid.classList.contains('list-view')) {
+            if (type === 'workflow' && path.toLowerCase().endsWith('.json') && !fileGrid.classList.contains('list-view')) {
                 changePreviewMenuItem.style.display = 'block';
             } else {
                 changePreviewMenuItem.style.display = 'none';
@@ -621,41 +658,45 @@ function toggleView() {
     const viewToggleBtn = document.querySelector('#viewToggleBtn');
     const icon = viewToggleBtn.querySelector('i');
     
+    let viewMode;
+    
     if (fileGrid.classList.contains('list-view')) {
-        // 切换到网格视图
+        // 切换到网格视图 - 启用预览图模式
         fileGrid.classList.remove('list-view');
         icon.className = 'pi pi-th-large';
+        managerState.previewMode = true;
+        viewMode = 'grid';
         showToast('切换到网格视图');
         
         // 清理展开状态
         clearExpandedState();
         
-        // 如果开启了预览模式，重新加载预览图
-        if (managerState.previewMode) {
-            setTimeout(() => {
-                if (loadDirectoryRef) {
-                    loadDirectoryRef(managerState.currentPath);
-                }
-            }, 100);
-        }
+        // 重新加载以显示预览图
+        setTimeout(() => {
+            if (loadDirectoryRef) {
+                loadDirectoryRef(managerState.currentPath);
+            }
+        }, 100);
     } else {
-        // 切换到列表视图
+        // 切换到列表视图 - 禁用预览图模式
         fileGrid.classList.add('list-view');
         icon.className = 'pi pi-list';
+        managerState.previewMode = false;
+        viewMode = 'list';
         showToast('切换到列表视图');
         
         // 在列表模式下隐藏预览图，显示图标，并恢复列表视图样式
-            const previewPlaceholders = document.querySelectorAll('.preview-placeholder');
-            const fileIcons = document.querySelectorAll('.file-icon');
+        const previewPlaceholders = document.querySelectorAll('.preview-placeholder');
+        const fileIcons = document.querySelectorAll('.file-icon');
         const fileIconContainers = document.querySelectorAll('.file-icon-container');
             
-            previewPlaceholders.forEach(placeholder => {
-                placeholder.style.display = 'none';
-            });
+        previewPlaceholders.forEach(placeholder => {
+            placeholder.style.display = 'none';
+        });
             
-            fileIcons.forEach(icon => {
-                icon.style.display = 'block';
-            });
+        fileIcons.forEach(icon => {
+            icon.style.display = 'block';
+        });
         
         // 恢复列表视图下的图标容器大小
         fileIconContainers.forEach(container => {
@@ -670,39 +711,70 @@ function toggleView() {
             }
         }, 10);
     }
+    
+    // 保存视图模式到配置文件
+    saveViewMode(viewMode);
 }
 
-// 切换预览模式
-function togglePreviewMode() {
-    const icon = document.querySelector('#previewToggleBtn i');
+// 保存视图模式
+async function saveViewMode(viewMode) {
+    try {
+        const response = await fetch('/workflow-manager/save-view-mode', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ viewMode })
+        });
+        
+        if (!response.ok) {
+            console.warn('Failed to save view mode:', response.statusText);
+        }
+    } catch (error) {
+        console.warn('Error saving view mode:', error);
+    }
+}
+
+// 保存当前路径
+async function saveLastPath(path) {
+    try {
+        const response = await fetch('/workflow-manager/save-last-path', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ lastPath: path })
+        });
+        
+        if (!response.ok) {
+            console.warn('Failed to save last path:', response.statusText);
+        }
+    } catch (error) {
+        console.warn('Error saving last path:', error);
+    }
+}
+
+// 应用配置中的视图模式
+function applyViewMode(config) {
     const fileGrid = document.querySelector('#fileGrid');
-    const isListView = fileGrid && fileGrid.classList.contains('list-view');
+    const viewToggleBtn = document.querySelector('#viewToggleBtn');
+    const icon = viewToggleBtn?.querySelector('i');
     
-    if (managerState.previewMode) {
-        // 关闭预览图模式
-        managerState.previewMode = false;
-        icon.className = 'pi pi-image';
-        icon.style.color = '';
-        showToast('已关闭预览图模式');
-        
-        // 清除所有预览图，恢复默认图标
-        clearPreviews();
-    } else {
-        // 开启预览图模式
-        if (isListView) {
-            showToast('列表视图下不支持预览图，请先切换到网格视图', 'warning');
-            return;
-        }
-        
+    if (!fileGrid || !icon) return;
+    
+    const viewMode = config.viewMode || 'list';
+    
+    if (viewMode === 'grid') {
+        // 网格视图
+        fileGrid.classList.remove('list-view');
+        icon.className = 'pi pi-th-large';
         managerState.previewMode = true;
-        icon.className = 'pi pi-image';
-        icon.style.color = '#007acc';
-        showToast('已开启预览图模式');
-        
-        // 重新渲染为预览图模式
-        if (loadDirectoryRef) {
-            loadDirectoryRef(managerState.currentPath);
-        }
+        clearExpandedState();
+    } else {
+        // 列表视图（默认）
+        fileGrid.classList.add('list-view');
+        icon.className = 'pi pi-list';
+        managerState.previewMode = false;
     }
 }
 
@@ -1028,13 +1100,75 @@ function initializeUIEventListeners() {
         window.dispatchEvent(new CustomEvent('workflowManager:deleteSelectedItems'));
     });
     
-    window.addEventListener('workflowManager:contextAction', (e) => {
-        handleContextAction(e.detail.action);
-    });
+    // 注意：workflowManager:contextAction 事件的监听在 workflow_operations.js 中处理
+    // 这里不再重复监听，避免操作被执行两次
     
     window.addEventListener('workflowManager:createFolder', () => {
         showCreateFolderDialog();
     });
+    
+    // 监听子项目重新绑定事件
+    window.addEventListener('workflowManager:rebindChildItem', (e) => {
+        const item = e.detail.element;
+        if (item) {
+            bindFileItemEvents(item);
+        }
+    });
+}
+
+// 为单个文件项目绑定事件
+function bindFileItemEvents(item) {
+    const path = item.dataset.path;
+    if (!path) return;
+    
+    // 检查是否已经绑定过事件，避免重复绑定
+    if (item.hasAttribute('data-events-bound')) {
+        return;
+    }
+    
+    // 标记已绑定事件
+    item.setAttribute('data-events-bound', 'true');
+    
+    // 绑定点击事件（选择功能）
+    item.addEventListener('click', (e) => {
+        // 阻止事件冒泡，防止被主文件网格处理
+        e.stopPropagation();
+        e.preventDefault();
+        
+        // 检查是否点击了展开图标
+        if (e.target.classList.contains('folder-expand-icon')) {
+            return; // 不执行选择逻辑
+        }
+        
+        // 使用统一的选择处理逻辑
+        handleItemSelection(path, e);
+    }, true); // 使用捕获模式，确保优先处理
+    
+    // 绑定拖拽事件
+    item.addEventListener('dragstart', handleDragStart);
+    item.addEventListener('dragover', handleDragOver);
+    item.addEventListener('drop', handleDrop);
+    item.addEventListener('dragend', handleDragEnd);
+    
+    // 绑定右键菜单事件
+    item.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // 如果当前项目没有被选中，则选中它
+        if (!managerState.selectedItems.has(path)) {
+            clearSelection();
+            managerState.selectedItems.add(path);
+            managerState.lastSelectedItem = path;
+            item.classList.add('selected');
+        }
+        
+        // 使用和主文件网格相同的右键菜单处理逻辑
+        handleContextMenu(e);
+    });
+    
+    // 确保可拖拽
+    item.draggable = true;
 }
 
 // 导出函数
@@ -1043,6 +1177,8 @@ export {
     bindManagerEvents,
     setLoadDirectoryRef,
     toggleView,
+    applyViewMode,
+    saveLastPath,
     showSortMenu,
     hideContextMenu,
     handleKeydown,

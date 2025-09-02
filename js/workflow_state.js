@@ -14,7 +14,8 @@ const managerState = {
     sortOrder: 'asc', // 'asc' or 'desc'
     expandedFolders: new Set(), // 已展开的文件夹路径
     previewMode: false, // 预览图模式开关
-    imageCache: new Map() // 图片缓存
+    imageCache: new Map(), // 图片缓存
+    lastSelectedItem: null // 用于Shift多选的最后选择项
 };
 
 // 防止重复加载的标志
@@ -87,6 +88,7 @@ function filterItems(searchTerm) {
 // 选择管理
 function clearSelection() {
     managerState.selectedItems.clear();
+    managerState.lastSelectedItem = null;
     document.querySelectorAll('.file-item.selected').forEach(item => {
         item.classList.remove('selected');
     });
@@ -95,6 +97,7 @@ function clearSelection() {
 
 function addSelection(path) {
     managerState.selectedItems.add(path);
+    managerState.lastSelectedItem = path;
     const item = document.querySelector(`[data-path="${path}"]`);
     if (item) item.classList.add('selected');
     updateStatusBar(document.querySelectorAll('.file-item').length);
@@ -105,10 +108,75 @@ function toggleSelection(path) {
         managerState.selectedItems.delete(path);
         const item = document.querySelector(`[data-path="${path}"]`);
         if (item) item.classList.remove('selected');
+        // 如果取消选择的是最后选择的项，清除lastSelectedItem
+        if (managerState.lastSelectedItem === path) {
+            managerState.lastSelectedItem = managerState.selectedItems.size > 0 ? 
+                Array.from(managerState.selectedItems).pop() : null;
+        }
     } else {
         addSelection(path);
     }
     updateStatusBar(document.querySelectorAll('.file-item').length);
+}
+
+// Shift多选功能
+function selectRange(fromPath, toPath) {
+    // 获取所有可见的文件项目（包括主目录和展开的子项目）
+    const fileItems = Array.from(document.querySelectorAll('.file-item')).filter(item => {
+        // 过滤掉隐藏的元素，确保元素确实可见
+        return item.offsetParent !== null && item.style.display !== 'none';
+    });
+    
+    const fromIndex = fileItems.findIndex(item => item.dataset.path === fromPath);
+    const toIndex = fileItems.findIndex(item => item.dataset.path === toPath);
+    
+    // 如果找不到起始项，可能是因为文件夹已折叠或文件已移动
+    if (fromIndex === -1) {
+        console.warn('selectRange: fromPath not found, falling back to single selection', { fromPath, toPath });
+        // 退回到单选模式
+        clearSelection();
+        addSelection(toPath);
+        return;
+    }
+    
+    if (toIndex === -1) {
+        console.warn('selectRange: toPath not found', { fromPath, toPath });
+        return;
+    }
+    
+    const startIndex = Math.min(fromIndex, toIndex);
+    const endIndex = Math.max(fromIndex, toIndex);
+    
+    // 清除现有选择
+    clearSelection();
+    
+    // 选择范围内的所有项目
+    for (let i = startIndex; i <= endIndex; i++) {
+        const item = fileItems[i];
+        const path = item.dataset.path;
+        if (path) {
+            managerState.selectedItems.add(path);
+            item.classList.add('selected');
+        }
+    }
+    
+    managerState.lastSelectedItem = toPath;
+    updateStatusBar(fileItems.length);
+}
+
+// 处理选择逻辑（支持Ctrl、Shift多选）
+function handleItemSelection(path, event) {
+    if (event.shiftKey && managerState.lastSelectedItem) {
+        // Shift多选：选择范围
+        selectRange(managerState.lastSelectedItem, path);
+    } else if (event.ctrlKey || event.metaKey) {
+        // Ctrl多选：切换选择
+        toggleSelection(path);
+    } else {
+        // 单选：清除其他选择，选择当前项
+        clearSelection();
+        addSelection(path);
+    }
 }
 
 function selectAll() {
@@ -239,7 +307,7 @@ async function loadWorkflowPreview(path) {
         // 首先测试API是否正常工作
         const apiWorking = await testPreviewAPI(path);
         if (!apiWorking) {
-            console.error(`${PLUGIN_NAME}: Preview API is not working for: ${path}`);
+            // API测试失败（通常是404，表示没有预览图），静默返回null
             return null;
         }
         
@@ -375,6 +443,9 @@ async function testPreviewAPI(path) {
                 console.error(`${PLUGIN_NAME}: ❌ API returned wrong content type:`, contentType);
                 return false;
             }
+        } else if (response.status === 404) {
+            // 404是正常情况，表示该工作流文件没有预览图，不需要打印错误
+            return false;
         } else {
             console.error(`${PLUGIN_NAME}: ❌ API returned error status:`, response.status, response.statusText);
             return false;
@@ -398,6 +469,8 @@ export {
     clearSelection,
     addSelection,
     toggleSelection,
+    selectRange,
+    handleItemSelection,
     selectAll,
     updateStatusBar,
     updateBreadcrumb,

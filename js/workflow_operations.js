@@ -5,7 +5,6 @@ import { api } from "../../../scripts/api.js";
 import { 
     PLUGIN_NAME, 
     managerState, 
-    formatFileSize, 
     formatDate, 
     sortItems,
     showToast, 
@@ -32,12 +31,16 @@ const WorkflowAPI = {
         }
     },
     
-    async rename(oldPath, newName) {
+    async rename(oldPath, newName, syncPreview = true) {
         try {
             const response = await api.fetchApi('/workflow-manager/rename', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ old_path: oldPath, new_name: newName })
+                body: JSON.stringify({ 
+                    old_path: oldPath, 
+                    new_name: newName,
+                    sync_preview: syncPreview && oldPath.toLowerCase().endsWith('.json')
+                })
             });
             return await response.json();
         } catch (error) {
@@ -46,12 +49,15 @@ const WorkflowAPI = {
         }
     },
     
-    async delete(path) {
+    async delete(path, syncPreview = true) {
         try {
             const response = await api.fetchApi('/workflow-manager/delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path })
+                body: JSON.stringify({ 
+                    path,
+                    sync_preview: syncPreview && path.toLowerCase().endsWith('.json')
+                })
             });
             return await response.json();
         } catch (error) {
@@ -60,12 +66,16 @@ const WorkflowAPI = {
         }
     },
     
-    async move(sourcePath, targetDir) {
+    async move(sourcePath, targetDir, syncPreview = true) {
         try {
             const response = await api.fetchApi('/workflow-manager/move', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ source_path: sourcePath, target_dir: targetDir })
+                body: JSON.stringify({ 
+                    source_path: sourcePath, 
+                    target_dir: targetDir,
+                    sync_preview: syncPreview && sourcePath.toLowerCase().endsWith('.json')
+                })
             });
             return await response.json();
         } catch (error) {
@@ -74,12 +84,16 @@ const WorkflowAPI = {
         }
     },
     
-    async copy(sourcePath, targetDir) {
+    async copy(sourcePath, targetDir, syncPreview = true) {
         try {
             const response = await api.fetchApi('/workflow-manager/copy', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ source_path: sourcePath, target_dir: targetDir })
+                body: JSON.stringify({ 
+                    source_path: sourcePath, 
+                    target_dir: targetDir,
+                    sync_preview: syncPreview && sourcePath.toLowerCase().endsWith('.json')
+                })
             });
             return await response.json();
         } catch (error) {
@@ -132,6 +146,18 @@ async function renameItem(path, newName) {
     const result = await WorkflowAPI.rename(path, newName);
     
     if (result.success) {
+        // 如果是JSON工作流文件，清除相关的预览图片缓存
+        if (path.toLowerCase().endsWith('.json') && managerState.imageCache) {
+            // 清除旧路径的缓存
+            managerState.imageCache.delete(path);
+            
+            // 清除可能的新路径缓存
+            const pathParts = path.split('/');
+            pathParts[pathParts.length - 1] = newName + (newName.endsWith('.json') ? '' : '.json');
+            const newPath = pathParts.join('/');
+            managerState.imageCache.delete(newPath);
+        }
+        
         showToast('重命名成功');
         if (loadDirectoryRef) {
             loadDirectoryRef(managerState.currentPath);
@@ -168,6 +194,11 @@ async function deleteSelectedItems() {
         const result = await WorkflowAPI.delete(path);
         if (result.success) {
             successCount++;
+            
+            // 如果是JSON工作流文件，清除相关的预览图片缓存
+            if (path.toLowerCase().endsWith('.json') && managerState.imageCache) {
+                managerState.imageCache.delete(path);
+            }
         } else {
             errorCount++;
             console.error(`Failed to delete ${path}:`, result.error);
@@ -187,44 +218,80 @@ async function deleteSelectedItems() {
 async function pasteItems() {
     if (!managerState.clipboardItem || managerState.clipboardItem.length === 0) return;
     
-    const targetDir = managerState.currentPath;
+    // 确定目标目录：如果有选中的文件夹，粘贴到该文件夹；否则粘贴到当前目录
+    let targetDir = managerState.currentPath;
+    const selectedPaths = Array.from(managerState.selectedItems);
+    
+    // 如果只选中了一个项目且是文件夹，则粘贴到该文件夹
+    if (selectedPaths.length === 1) {
+        const selectedItem = document.querySelector(`[data-path="${selectedPaths[0]}"]`);
+        if (selectedItem && selectedItem.dataset.type === 'directory') {
+            targetDir = selectedPaths[0];
+        }
+    }
+    
     const operation = managerState.clipboardOperation;
     
     let successCount = 0;
     let errorCount = 0;
     
-    for (const sourcePath of managerState.clipboardItem) {
-        let result;
-        
-        if (operation === 'cut') {
-            result = await WorkflowAPI.move(sourcePath, targetDir);
-        } else {
-            result = await WorkflowAPI.copy(sourcePath, targetDir);
-        }
-        
-        if (result.success) {
-            successCount++;
-        } else {
-            errorCount++;
-            console.error(`Failed to ${operation} ${sourcePath}:`, result.error);
-        }
-    }
+    // 显示加载状态
+    showLoading(true);
     
-    if (successCount > 0) {
-        const actionText = operation === 'cut' ? '移动' : '复制';
-        showToast(`成功${actionText} ${successCount} 项${errorCount > 0 ? `，失败 ${errorCount} 项` : ''}`);
-        
-        // 清空剪贴板（仅剪切操作）
-        if (operation === 'cut') {
-            managerState.clipboardItem = null;
-            managerState.clipboardOperation = 'cut';
+    try {
+        for (const sourcePath of managerState.clipboardItem) {
+            let result;
+            
+            if (operation === 'cut') {
+                result = await WorkflowAPI.move(sourcePath, targetDir);
+            } else {
+                result = await WorkflowAPI.copy(sourcePath, targetDir);
+            }
+            
+            if (result.success) {
+                successCount++;
+                
+                // 如果是JSON工作流文件，清除相关的预览图片缓存
+                if (sourcePath.toLowerCase().endsWith('.json') && managerState.imageCache) {
+                    // 清除源文件的缓存
+                    managerState.imageCache.delete(sourcePath);
+                    
+                    // 如果是移动操作，还需要清除可能的新路径缓存
+                    if (operation === 'cut') {
+                        const fileName = sourcePath.split('/').pop();
+                        const newPath = targetDir ? `${targetDir}/${fileName}` : fileName;
+                        managerState.imageCache.delete(newPath);
+                    }
+                }
+            } else {
+                errorCount++;
+                console.error(`Failed to ${operation} ${sourcePath}:`, result.error);
+            }
         }
         
-        if (loadDirectoryRef) {
-            loadDirectoryRef(managerState.currentPath);
+        if (successCount > 0) {
+            const actionText = operation === 'cut' ? '移动' : '复制';
+            const targetText = targetDir === managerState.currentPath ? '当前目录' : `文件夹 "${targetDir.split('/').pop()}"`;
+            showToast(`成功${actionText} ${successCount} 项到${targetText}${errorCount > 0 ? `，失败 ${errorCount} 项` : ''}`);
+            
+            // 清空剪贴板（仅剪切操作）
+            if (operation === 'cut') {
+                managerState.clipboardItem = null;
+                managerState.clipboardOperation = null;
+            }
+            
+            // 刷新当前目录
+            if (loadDirectoryRef) {
+                await loadDirectoryRef(managerState.currentPath);
+            }
+        } else {
+            showToast(`${operation === 'cut' ? '移动' : '复制'}失败`, 'error');
         }
-    } else {
-        showToast(`${operation === 'cut' ? '移动' : '复制'}失败`, 'error');
+    } catch (error) {
+        console.error('Paste operation failed:', error);
+        showToast(`粘贴失败: ${error.message}`, 'error');
+    } finally {
+        showLoading(false);
     }
 }
 
@@ -251,8 +318,14 @@ function handleContextAction(action) {
             break;
             
         case 'refresh-preview':
-            if (selectedPaths.length === 1) {
-                refreshWorkflowPreview(selectedPaths[0]);
+            if (selectedPaths.length > 0) {
+                const workflowPaths = selectedPaths.filter(path => path.toLowerCase().endsWith('.json'));
+                if (workflowPaths.length > 0) {
+                    showToast(`正在刷新 ${workflowPaths.length} 个工作流预览图...`, 'info');
+                    workflowPaths.forEach(path => refreshWorkflowPreview(path));
+                } else {
+                    showToast('请选择工作流文件', 'warning');
+                }
             }
             break;
             
@@ -264,12 +337,16 @@ function handleContextAction(action) {
                 } else {
                     showToast('请选择工作流文件', 'warning');
                 }
+            } else if (selectedPaths.length > 1) {
+                showToast('更换预览图只能选择单个工作流文件', 'warning');
             }
             break;
             
         case 'rename':
             if (selectedPaths.length === 1) {
                 showRenameDialog(selectedPaths[0]);
+            } else if (selectedPaths.length > 1) {
+                showToast('重命名只能选择单个文件或文件夹', 'warning');
             }
             break;
             
@@ -304,6 +381,8 @@ function handleContextAction(action) {
         case 'properties':
             if (selectedPaths.length === 1) {
                 showPropertiesDialog(selectedPaths[0]);
+            } else if (selectedPaths.length > 1) {
+                showMultiplePropertiesDialog(selectedPaths);
             }
             break;
             
@@ -379,6 +458,8 @@ function showPropertiesDialog(path) {
                 border-radius: 8px;
                 min-width: 400px;
                 max-width: 600px;
+                max-height: 80vh;
+                overflow-y: auto;
                 box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
             }
             
@@ -440,9 +521,97 @@ function showPropertiesDialog(path) {
                 display: flex;
                 justify-content: flex-end;
             }
+            
+            .properties-list {
+                max-height: 300px;
+                overflow-y: auto;
+                border: 1px solid var(--border-color, #444);
+                border-radius: 4px;
+                margin: 10px 0;
+            }
+            
+            .properties-list-item {
+                padding: 8px 12px;
+                border-bottom: 1px solid var(--border-color, #444);
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            .properties-list-item:last-child {
+                border-bottom: none;
+            }
+            
+            .properties-list-item i {
+                color: var(--descrip-text, #999);
+            }
+            
+            .properties-list-item span {
+                color: var(--input-text, #ffffff);
+                font-size: 12px;
+                word-break: break-all;
+            }
         `;
         document.head.appendChild(style);
     }
+    
+    document.body.appendChild(dialog);
+}
+
+// 多选属性对话框
+function showMultiplePropertiesDialog(paths) {
+    const folderCount = paths.filter(path => {
+        const item = document.querySelector(`[data-path="${path}"]`);
+        return item?.dataset.type === 'directory';
+    }).length;
+    
+    const workflowCount = paths.length - folderCount;
+    
+    // 创建多选属性对话框
+    const dialog = document.createElement('div');
+    dialog.className = 'properties-dialog-overlay';
+    dialog.innerHTML = `
+        <div class="properties-dialog">
+            <div class="dialog-header">
+                <h3>属性 (${paths.length} 项已选择)</h3>
+                <button class="dialog-close" onclick="this.closest('.properties-dialog-overlay').remove()">×</button>
+            </div>
+            <div class="dialog-content">
+                <div class="property-row">
+                    <label>已选择:</label>
+                    <span>${paths.length} 项</span>
+                </div>
+                <div class="property-row">
+                    <label>文件夹:</label>
+                    <span>${folderCount} 个</span>
+                </div>
+                <div class="property-row">
+                    <label>工作流:</label>
+                    <span>${workflowCount} 个</span>
+                </div>
+                <div class="property-row">
+                    <label>详细列表:</label>
+                </div>
+                <div class="properties-list">
+                    ${paths.map(path => {
+                        const item = document.querySelector(`[data-path="${path}"]`);
+                        const name = item?.dataset.name || path;
+                        const type = item?.dataset.type || 'workflow';
+                        const icon = type === 'directory' ? 'pi-folder' : 'pi-file';
+                        return `
+                            <div class="properties-list-item">
+                                <i class="pi ${icon}"></i>
+                                <span>${name}</span>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <button class="btn-primary" onclick="this.closest('.properties-dialog-overlay').remove()">确定</button>
+            </div>
+        </div>
+    `;
     
     document.body.appendChild(dialog);
 }
@@ -451,6 +620,9 @@ function showPropertiesDialog(path) {
 let draggedItems = [];
 
 function handleDragStart(e) {
+    e.stopPropagation(); // 阻止事件冒泡到ComfyUI画布
+    e.stopImmediatePropagation(); // 立即阻止事件传播
+    
     const fileItem = e.target.closest('.file-item');
     if (!fileItem) return;
     
@@ -537,23 +709,51 @@ function handleDragStart(e) {
 
 function handleDragOver(e) {
     e.preventDefault();
+    e.stopPropagation(); // 阻止事件冒泡到ComfyUI画布
+    e.stopImmediatePropagation(); // 立即阻止事件传播
     
     const fileItem = e.target.closest('.file-item');
+    const emptyState = e.target.closest('#emptyState');
+    const workflowManager = e.target.closest('.workflow-manager');
+    
+    // 检查是否在侧边栏标签容器内（这个容器覆盖整个侧边栏）
+    const isInSidebar = e.currentTarget && e.currentTarget !== e.target.closest('.file-item');
     
     // 移除所有drop-zone样式
     document.querySelectorAll('.file-item.drop-zone').forEach(item => {
         item.classList.remove('drop-zone');
     });
     
+    document.querySelectorAll('.drop-zone').forEach(item => {
+        item.classList.remove('drop-zone');
+    });
+    
+    // 检查是否有外部文件
+    const hasFiles = e.dataTransfer.types.includes('Files');
+    
+    if (hasFiles) {
+        // 外部文件拖拽 - 允许拖到文件夹或空白区域
+        if (fileItem && fileItem.dataset.type === 'directory') {
+            fileItem.classList.add('drop-zone');
+        } else if (emptyState || (isInSidebar && !fileItem)) {
+            // 拖拽到空状态区域或侧边栏空白区域
+            if (emptyState) {
+                emptyState.classList.add('drop-zone');
+            } else if (isInSidebar) {
+                e.currentTarget.classList.add('drop-zone');
+            }
+        }
+        e.dataTransfer.dropEffect = 'copy';
+        return;
+    }
+    
+    // 原有的内部文件拖拽逻辑
     if (fileItem && fileItem.dataset.type === 'directory') {
         const itemPath = fileItem.dataset.path;
         
-        // 检查是否是有效的放置目标（不能拖拽到自己或子目录）
-        // 扩展：支持拖拽到任何展开的文件夹（包括子文件夹）
         if (!draggedItems.includes(itemPath) && !isSubDirectory(itemPath, draggedItems)) {
             fileItem.classList.add('drop-zone');
             
-            // 设置拖拽效果（根据是否按下Ctrl键）
             if (e.ctrlKey || e.metaKey) {
                 e.dataTransfer.dropEffect = 'copy';
             } else {
@@ -562,26 +762,78 @@ function handleDragOver(e) {
         } else {
             e.dataTransfer.dropEffect = 'none';
         }
+    } else if (emptyState && draggedItems.length > 0) {
+        emptyState.classList.add('drop-zone');
+        if (e.ctrlKey || e.metaKey) {
+            e.dataTransfer.dropEffect = 'copy';
+        } else {
+            e.dataTransfer.dropEffect = 'move';
+        }
+    } else if (isInSidebar && !fileItem && draggedItems.length > 0) {
+        // 拖拽到侧边栏空白区域（当前目录）
+        e.currentTarget.classList.add('drop-zone');
+        if (e.ctrlKey || e.metaKey) {
+            e.dataTransfer.dropEffect = 'copy';
+        } else {
+            e.dataTransfer.dropEffect = 'move';
+        }
     } else {
         e.dataTransfer.dropEffect = 'none';
     }
 }
 
+
 function handleDrop(e) {
     e.preventDefault();
+    e.stopPropagation(); // 阻止事件冒泡到ComfyUI画布
+    e.stopImmediatePropagation(); // 立即阻止事件传播
     
     const fileItem = e.target.closest('.file-item');
+    const emptyState = e.target.closest('#emptyState');
+    // 检查是否在侧边栏标签容器内
+    const isInSidebar = e.currentTarget && e.currentTarget !== e.target.closest('.file-item');
     
     // 移除所有drop-zone样式
     document.querySelectorAll('.file-item.drop-zone').forEach(item => {
         item.classList.remove('drop-zone');
     });
     
+    document.querySelectorAll('.drop-zone').forEach(item => {
+        item.classList.remove('drop-zone');
+    });
+    
+    // 检查是否有外部文件或文件夹拖入
+    const items = e.dataTransfer.items;
+    const files = e.dataTransfer.files;
+    
+    // 检查是否为外部拖拽：有文件且没有内部拖拽标识
+    const isExternalDrag = (items && items.length > 0 || files && files.length > 0) && 
+                          !e.dataTransfer.types.includes('application/comfy-workflow-path') &&
+                          !e.dataTransfer.types.includes('text/plain');
+    
+    // 只有确认是外部拖拽时才处理外部文件
+    if (isExternalDrag) {
+        // 确定目标目录
+        let targetDir = '';
+        
+        if (fileItem && fileItem.dataset.type === 'directory') {
+            targetDir = fileItem.dataset.path;
+        } else if (emptyState || (isInSidebar && !fileItem)) {
+            targetDir = managerState.currentPath;
+        }
+        
+        // 使用 items（支持文件夹）或回退到 files（仅文件）
+        const droppedItems = items && items.length > 0 ? Array.from(items) : Array.from(files);
+        
+        handleExternalFileDrop(droppedItems, targetDir);
+        return;
+    }
+    
+    // 原有的内部文件移动/复制逻辑
     if (fileItem && fileItem.dataset.type === 'directory') {
         const targetPath = fileItem.dataset.path;
         const isCopy = e.ctrlKey || e.metaKey;
         
-        // 过滤拖拽项目，只包含.json文件
         const validWorkflowItems = draggedItems.filter(itemPath => 
             itemPath.toLowerCase().endsWith('.json')
         );
@@ -591,14 +843,42 @@ function handleDrop(e) {
             return;
         }
         
-        // 检查是否是有效的放置目标
         if (!validWorkflowItems.includes(targetPath) && !isSubDirectory(targetPath, validWorkflowItems)) {
             performDropOperation(validWorkflowItems, targetPath, isCopy);
+        }
+    } else if (emptyState && draggedItems.length > 0) {
+        // 处理到空文件夹区域的拖放
+        const targetPath = managerState.currentPath;
+        const isCopy = e.ctrlKey || e.metaKey;
+        
+        const validWorkflowItems = draggedItems.filter(itemPath => 
+            itemPath.toLowerCase().endsWith('.json')
+        );
+        
+        if (validWorkflowItems.length > 0) {
+            performDropOperation(validWorkflowItems, targetPath, isCopy);
+        }
+    } else if (isInSidebar && !fileItem && draggedItems.length > 0) {
+        // 处理到侧边栏空白区域的拖放（当前目录）
+        const targetPath = managerState.currentPath;
+        const isCopy = e.ctrlKey || e.metaKey;
+        
+        const validWorkflowItems = draggedItems.filter(itemPath => 
+            itemPath.toLowerCase().endsWith('.json')
+        );
+        
+        if (validWorkflowItems.length > 0) {
+            performDropOperation(validWorkflowItems, targetPath, isCopy);
+        } else {
+            showToast(`没有可放置的.json工作流文件`, 'warning');
         }
     }
 }
 
 function handleDragEnd(e) {
+    e.stopPropagation(); // 阻止事件冒泡到ComfyUI画布
+    e.stopImmediatePropagation(); // 立即阻止事件传播
+    
     const fileItem = e.target.closest('.file-item');
     if (fileItem) {
         fileItem.classList.remove('dragging');
@@ -606,6 +886,10 @@ function handleDragEnd(e) {
     
     // 移除所有drop-zone样式
     document.querySelectorAll('.file-item.drop-zone').forEach(item => {
+        item.classList.remove('drop-zone');
+    });
+    
+    document.querySelectorAll('.drop-zone').forEach(item => {
         item.classList.remove('drop-zone');
     });
     
@@ -648,6 +932,19 @@ async function performDropOperation(sourcePaths, targetPath, isCopy) {
             
             if (result.success) {
                 successCount++;
+                
+                // 清除相关的预览图片缓存
+                if (managerState.imageCache) {
+                    // 清除源文件的缓存
+                    managerState.imageCache.delete(sourcePath);
+                    
+                    // 如果是移动操作，还需要清除可能的新路径缓存
+                    if (!isCopy) {
+                        const fileName = sourcePath.split('/').pop();
+                        const newPath = targetPath ? `${targetPath}/${fileName}` : fileName;
+                        managerState.imageCache.delete(newPath);
+                    }
+                }
             } else {
                 errorCount++;
                 console.error(`Failed to ${operation} ${sourcePath}:`, result.error);
@@ -657,58 +954,11 @@ async function performDropOperation(sourcePaths, targetPath, isCopy) {
         if (successCount > 0) {
             showToast(`成功${actionText} ${successCount} 个工作流文件${errorCount > 0 ? `，失败 ${errorCount} 个` : ''}`);
             
-            // 刷新主目录
+            // 刷新主目录（renderFileGrid会自动恢复展开状态）
             if (loadDirectoryRef) {
-                loadDirectoryRef(managerState.currentPath);
+                await loadDirectoryRef(managerState.currentPath);
             }
-            
-            // 如果目标文件夹已展开，刷新其内容
-            if (managerState.expandedFolders.has(targetPath)) {
-                setTimeout(async () => {
-                    const targetContainer = document.querySelector(`[data-parent-path="${targetPath}"]`);
-                    if (targetContainer) {
-                        // 重新获取目标文件夹内容并更新
-                        try {
-                            const result = await WorkflowAPI.browse(targetPath);
-                            if (result.success) {
-                                const sortedItems = sortItems(result.items || []);
-                                targetContainer.innerHTML = sortedItems.map(item => {
-                                    const isFolder = item.type === 'directory';
-                                    const iconClass = isFolder ? 'folder' : 'workflow';
-                                    const icon = isFolder ? 'pi-folder' : 'pi-file';
-                                    
-                                    const meta = isFolder 
-                                        ? `${item.workflow_count} 个工作流` 
-                                        : `${formatFileSize(item.size)} • ${formatDate(item.modified)}`;
-                                    
-                                    const expandIcon = isFolder 
-                                        ? `<i class="folder-expand-icon pi pi-chevron-right" data-path="${item.path}" title="展开文件夹"></i>` 
-                                        : '';
-                                    
-                                    return `
-                                        <div class="file-item child-item" 
-                                             data-path="${item.path}" 
-                                             data-name="${item.name}"
-                                             data-type="${item.type}"
-                                             draggable="true">
-                                            ${expandIcon}
-                                            <i class="file-icon ${iconClass} pi ${icon}"></i>
-                                            <div class="file-name">${item.name}</div>
-                                            <div class="file-meta">${meta}</div>
-                                        </div>
-                                    `;
-                                }).join('');
-                                
-                                // 通知重新绑定事件
-                                window.dispatchEvent(new CustomEvent('workflowManager:rebindEvents'));
-                            }
-                        } catch (error) {
-                            console.error('Failed to refresh expanded folder:', error);
-                        }
-                    }
-                }, 100);
-            }
-        } else {
+        } else if (errorCount > 0) {
             showToast(`${actionText}失败`, 'error');
         }
     } catch (error) {
@@ -717,6 +967,218 @@ async function performDropOperation(sourcePaths, targetPath, isCopy) {
     } finally {
         showLoading(false);
     }
+}
+
+// 处理外部文件拖入（支持文件夹）
+async function handleExternalFileDrop(items, targetDir) {
+    showLoading(true);
+    
+    try {
+        // 收集所有JSON文件（包括文件夹内的）
+        const allJsonFiles = await processDroppedItems(items);
+        
+        if (allJsonFiles.length === 0) {
+            showToast('没有找到有效的JSON工作流文件', 'warning');
+            return;
+        }
+        
+        // 验证JSON文件格式
+        const validFiles = [];
+        const invalidFiles = [];
+        
+        for (const fileInfo of allJsonFiles) {
+            try {
+                const text = await fileInfo.file.text();
+                JSON.parse(text); // 验证JSON格式
+                validFiles.push(fileInfo);
+            } catch (error) {
+                invalidFiles.push(fileInfo.relativePath || fileInfo.file.name);
+            }
+        }
+        
+        if (validFiles.length === 0) {
+            showToast('没有有效的JSON工作流文件', 'error');
+            return;
+        }
+        
+        // 按目录分组处理文件
+        const filesByDirectory = groupFilesByDirectory(validFiles, targetDir);
+        
+        // 批量上传文件
+        let totalUploaded = 0;
+        let totalFailed = 0;
+        
+        for (const [dirPath, dirFiles] of filesByDirectory.entries()) {
+            try {
+                const result = await uploadFilesToDirectory(dirFiles, dirPath);
+                if (result.success) {
+                    totalUploaded += result.uploaded || dirFiles.length;
+                } else {
+                    totalFailed += dirFiles.length;
+                }
+            } catch (error) {
+                console.error(`Failed to upload files to ${dirPath}:`, error);
+                totalFailed += dirFiles.length;
+            }
+        }
+        
+        if (totalUploaded > 0) {
+            showToast(`成功上传 ${totalUploaded} 个工作流文件${totalFailed > 0 ? `，失败 ${totalFailed} 个` : ''}`, 'success');
+            
+            // 刷新目录显示
+            if (loadDirectoryRef) {
+                loadDirectoryRef(managerState.currentPath);
+            }
+        } else {
+            showToast('文件上传失败', 'error');
+        }
+        
+    } catch (error) {
+        console.error('Failed to process dropped items:', error);
+        showToast(`处理失败: ${error.message}`, 'error');
+    } finally {
+        showLoading(false);
+    }
+}
+
+// 处理拖拽的项目（文件或文件夹）
+async function processDroppedItems(items) {
+    const jsonFiles = [];
+    
+    // 检查是否是 DataTransfer.items（拖拽事件）还是 FileList（文件输入）
+    const hasWebkitEntry = items[0] && typeof items[0].webkitGetAsEntry === 'function';
+    
+    if (hasWebkitEntry) {
+        // 使用 webkitGetAsEntry 处理（支持文件夹）
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            
+            if (item.kind === 'file') {
+                try {
+                    const entry = item.webkitGetAsEntry();
+                    if (entry) {
+                        await processEntry(entry, '', jsonFiles);
+                    }
+                } catch (error) {
+                    console.error(`${PLUGIN_NAME}: Error processing item ${i}:`, error);
+                }
+            }
+        }
+    } else {
+        // 回退到传统文件处理（只支持文件，不支持文件夹）
+        for (const file of items) {
+            if (file && file.name && file.name.toLowerCase().endsWith('.json')) {
+                jsonFiles.push({
+                    file: file,
+                    relativePath: file.name
+                });
+            }
+        }
+    }
+    
+    return jsonFiles;
+}
+
+// 递归处理文件系统条目
+async function processEntry(entry, basePath, jsonFiles) {
+    if (entry.isFile) {
+        // 处理文件
+        try {
+            const file = await getFileFromEntry(entry);
+            if (file && file.name.toLowerCase().endsWith('.json')) {
+                const relativePath = basePath ? `${basePath}/${file.name}` : file.name;
+                jsonFiles.push({
+                    file: file,
+                    relativePath: relativePath,
+                    directoryPath: basePath
+                });
+            }
+        } catch (error) {
+            console.error(`${PLUGIN_NAME}: Error getting file from entry:`, entry.name, error);
+        }
+    } else if (entry.isDirectory) {
+        // 处理文件夹
+        try {
+            const reader = entry.createReader();
+            const entries = await readDirectoryEntries(reader);
+            
+            for (const childEntry of entries) {
+                const childPath = basePath ? `${basePath}/${entry.name}` : entry.name;
+                await processEntry(childEntry, childPath, jsonFiles);
+            }
+        } catch (error) {
+            console.error(`${PLUGIN_NAME}: Error reading directory:`, entry.name, error);
+        }
+    }
+}
+
+// 从文件系统条目获取文件对象
+function getFileFromEntry(entry) {
+    return new Promise((resolve, reject) => {
+        entry.file(resolve, reject);
+    });
+}
+
+// 读取目录条目
+function readDirectoryEntries(reader) {
+    return new Promise((resolve, reject) => {
+        const allEntries = [];
+        
+        function readEntries() {
+            reader.readEntries((entries) => {
+                if (entries.length === 0) {
+                    resolve(allEntries);
+                } else {
+                    allEntries.push(...entries);
+                    readEntries(); // 继续读取
+                }
+            }, reject);
+        }
+        
+        readEntries();
+    });
+}
+
+// 按目录分组文件
+function groupFilesByDirectory(validFiles, targetDir) {
+    const filesByDirectory = new Map();
+    
+    for (const fileInfo of validFiles) {
+        let dirPath = targetDir;
+        
+        // 如果文件有目录路径，创建相应的子目录
+        if (fileInfo.directoryPath) {
+            dirPath = targetDir ? `${targetDir}/${fileInfo.directoryPath}` : fileInfo.directoryPath;
+        }
+        
+        if (!filesByDirectory.has(dirPath)) {
+            filesByDirectory.set(dirPath, []);
+        }
+        
+        filesByDirectory.get(dirPath).push(fileInfo);
+    }
+    
+    return filesByDirectory;
+}
+
+// 上传文件到指定目录
+async function uploadFilesToDirectory(fileInfos, dirPath) {
+    // 创建FormData
+    const formData = new FormData();
+    formData.append('target_dir', dirPath);
+    formData.append('create_dirs', 'true'); // 告诉后端需要创建目录
+    
+    fileInfos.forEach(fileInfo => {
+        formData.append('workflow_files', fileInfo.file);
+    });
+    
+    // 上传文件
+    const response = await api.fetchApi('/workflow-manager/upload-workflow', {
+        method: 'POST',
+        body: formData
+    });
+    
+    return await response.json();
 }
 
 // 刷新工作流预览图
@@ -913,11 +1375,13 @@ export {
     pasteItems,
     handleContextAction,
     showPropertiesDialog,
+    showMultiplePropertiesDialog,
     handleDragStart,
     handleDragOver,
     handleDrop,
     handleDragEnd,
     performDropOperation,
+    handleExternalFileDrop,
     refreshWorkflowPreview,
     initializeOperationEventListeners,
     changeWorkflowPreview
