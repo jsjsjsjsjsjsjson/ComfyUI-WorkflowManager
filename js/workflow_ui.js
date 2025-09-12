@@ -175,6 +175,17 @@ function bindManagerEvents(container) {
     const searchInput = container.querySelector('#searchInput');
     let searchTimeout;
     
+    // 搜索框自动获得焦点
+    setTimeout(() => {
+        searchInput.focus();
+    }, 150); // 比管理器焦点稍晚一点
+
+    // 阻止搜索框点击事件冒泡到管理器容器
+    searchInput.addEventListener('click', (e) => {
+        e.stopPropagation();
+        searchInput.focus(); // 确保搜索框获得焦点
+    });
+    
     // 输入事件处理
     searchInput.addEventListener('input', (e) => {
         clearTimeout(searchTimeout);
@@ -187,6 +198,7 @@ function bindManagerEvents(container) {
     searchInput.addEventListener('keydown', (e) => {
         // 允许所有标准键盘操作
         e.stopPropagation(); // 防止事件被其他处理器拦截
+        e.stopImmediatePropagation(); // 阻止同一元素上的其他监听器
         
         // 特别处理退格键
         if (e.key === 'Backspace') {
@@ -204,7 +216,7 @@ function bindManagerEvents(container) {
             e.target.value = '';
             filterItems('');
         }
-    });
+    }, true); // 使用捕获阶段，确保优先执行
     
     // 文件网格点击事件
     const fileGrid = container.querySelector('#fileGrid');
