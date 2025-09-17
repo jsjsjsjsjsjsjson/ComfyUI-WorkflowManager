@@ -56,6 +56,13 @@ const WorkflowAPI = {
     }
 };
 
+function getIconHTML(itemType) {
+    if (itemType === 'directory') {
+        return '<i class="file-icon folder pi pi-folder" aria-hidden="true"></i>';
+    }
+    return '<span class="file-icon workflow" role="img" aria-label="工作流文件"></span>';
+}
+
 // 核心目录加载函数
 async function loadDirectory(path, skipViewModeApply = false) {
     
@@ -142,30 +149,30 @@ async function renderFileGrid(items) {
     
     fileGrid.innerHTML = sortedItems.map(item => {
         const isFolder = item.type === 'directory';
-        const iconClass = isFolder ? 'folder' : 'workflow';
-        const icon = isFolder ? 'pi-folder' : 'pi-file';
-        
-        const meta = isFolder 
-            ? `${item.workflow_count} 个工作流` 
+
+        const meta = isFolder
+            ? `${item.workflow_count} 个工作流`
             : `${formatDate(item.modified)}`;
-        
+
         // 检查是否在列表视图模式下
         const isListView = fileGrid.classList.contains('list-view');
-        
+
         // 为文件夹添加展开图标（仅在列表视图下）
-        const expandIcon = isFolder && isListView 
-            ? `<i class="folder-expand-icon pi pi-chevron-right" data-path="${item.path}" title="展开文件夹"></i>` 
+        const expandIcon = isFolder && isListView
+            ? `<i class="folder-expand-icon pi pi-chevron-right" data-path="${item.path}" title="展开文件夹"></i>`
             : '';
-        
+
+        const iconHtml = getIconHTML(item.type);
+
         return `
-            <div class="file-item" 
-                 data-path="${item.path}" 
+            <div class="file-item"
+                 data-path="${item.path}"
                  data-name="${item.name}"
                  data-type="${item.type}"
                  draggable="true">
                 ${expandIcon}
                 <div class="file-icon-container">
-                    <i class="file-icon ${iconClass} pi ${icon}" data-icon-path="${item.path}"></i>
+                    ${iconHtml}
                     ${!isFolder ? `<div class="preview-placeholder" data-preview-path="${item.path}" style="display: none;">
                         <div class="preview-loading" style="display: none;">
                             <div class="loading-spinner"></div>
@@ -205,18 +212,18 @@ async function renderFileGrid(items) {
                     
                     result.items.forEach((item, index) => {
                         const isFolder = item.type === 'directory';
-                        const iconClass = isFolder ? 'folder' : 'workflow';
-                        const icon = isFolder ? 'pi-folder' : 'pi-file';
-                        
-                        const meta = isFolder 
-                            ? `${item.workflow_count} 个工作流` 
+
+                        const meta = isFolder
+                            ? `${item.workflow_count} 个工作流`
                             : `${formatDate(item.modified)}`;
-                        
+
                         // 子文件夹也可以展开
-                        const expandIcon = isFolder 
-                            ? `<i class="folder-expand-icon pi pi-chevron-right" data-path="${item.path}" title="展开文件夹"></i>` 
+                        const expandIcon = isFolder
+                            ? `<i class="folder-expand-icon pi pi-chevron-right" data-path="${item.path}" title="展开文件夹"></i>`
                             : '';
-                        
+
+                        const iconHtml = getIconHTML(item.type);
+
                         const childItem = document.createElement('div');
                         childItem.className = 'file-item child-item';
                         childItem.dataset.path = item.path;
@@ -224,11 +231,11 @@ async function renderFileGrid(items) {
                         childItem.dataset.type = item.type;
                         childItem.dataset.parentPath = folderPath;
                         childItem.draggable = true;
-                        
+
                         childItem.innerHTML = `
                             ${expandIcon}
                             <div class="file-icon-container">
-                                <i class="file-icon ${iconClass} pi ${icon}"></i>
+                                ${iconHtml}
                             </div>
                             <div class="file-name">${item.name}</div>
                             <div class="file-meta">${meta}</div>
@@ -315,18 +322,18 @@ async function expandFolderContent(folderPath) {
             // 渲染子项目并直接插入到文件夹后面
             result.items.forEach((item, index) => {
                 const isFolder = item.type === 'directory';
-                const iconClass = isFolder ? 'folder' : 'workflow';
-                const icon = isFolder ? 'pi-folder' : 'pi-file';
-                
-                const meta = isFolder 
-                    ? `${item.workflow_count} 个工作流` 
+
+                const meta = isFolder
+                    ? `${item.workflow_count} 个工作流`
                     : `${formatDate(item.modified)}`;
-                
+
                 // 子文件夹也可以展开
-                const expandIcon = isFolder 
-                    ? `<i class="folder-expand-icon pi pi-chevron-right" data-path="${item.path}" title="展开文件夹"></i>` 
+                const expandIcon = isFolder
+                    ? `<i class="folder-expand-icon pi pi-chevron-right" data-path="${item.path}" title="展开文件夹"></i>`
                     : '';
-                
+
+                const iconHtml = getIconHTML(item.type);
+
                 const childItem = document.createElement('div');
                 childItem.className = 'file-item child-item';
                 childItem.dataset.path = item.path;
@@ -334,11 +341,11 @@ async function expandFolderContent(folderPath) {
                 childItem.dataset.type = item.type;
                 childItem.dataset.parentPath = folderPath;
                 childItem.draggable = true;
-                
+
                 childItem.innerHTML = `
                     ${expandIcon}
                     <div class="file-icon-container">
-                        <i class="file-icon ${iconClass} pi ${icon}"></i>
+                        ${iconHtml}
                     </div>
                     <div class="file-name">${item.name}</div>
                     <div class="file-meta">${meta}</div>

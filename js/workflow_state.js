@@ -2,6 +2,8 @@
 // 状态管理和工具函数
 
 const PLUGIN_NAME = "WorkflowManager";
+// 自定义工作流文件图标路径
+const WORKFLOW_FILE_ICON_PATH = "extensions/ComfyUI-WorkflowManager/assets/workflow-file-icon.svg";
 
 // 管理器状态
 const managerState = {
@@ -482,5 +484,6 @@ export {
     preloadNearbyPreviews,
     clearImageCache,
     getPreviewPath,
-    testPreviewAPI
-}; 
+    testPreviewAPI,
+    WORKFLOW_FILE_ICON_PATH
+};

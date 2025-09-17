@@ -2,15 +2,16 @@
 // 文件操作和拖拽功能
 
 import { api } from "../../../scripts/api.js";
-import { 
-    PLUGIN_NAME, 
-    managerState, 
-    formatDate, 
+import {
+    PLUGIN_NAME,
+    managerState,
+    formatDate,
     sortItems,
-    showToast, 
+    showToast,
     showLoading,
     clearSelection,
-    addSelection
+    addSelection,
+    WORKFLOW_FILE_ICON_PATH
 } from './workflow_state.js';
 
 import { createDragImage, isSubDirectory } from './workflow_styles.js';
@@ -542,8 +543,10 @@ function showPropertiesDialog(path) {
                 border-bottom: none;
             }
             
-            .properties-list-item i {
+            .properties-list-item i,
+            .properties-list-item .workflow-icon-inline {
                 color: var(--descrip-text, #999);
+                flex-shrink: 0;
             }
             
             .properties-list-item span {
@@ -597,10 +600,12 @@ function showMultiplePropertiesDialog(paths) {
                         const item = document.querySelector(`[data-path="${path}"]`);
                         const name = item?.dataset.name || path;
                         const type = item?.dataset.type || 'workflow';
-                        const icon = type === 'directory' ? 'pi-folder' : 'pi-file';
+                        const iconHtml = type === 'directory'
+                            ? '<i class="pi pi-folder" aria-hidden="true"></i>'
+                            : `<span class="workflow-icon-inline small" aria-hidden="true" style="background-image: url('${WORKFLOW_FILE_ICON_PATH}');"></span>`;
                         return `
                             <div class="properties-list-item">
-                                <i class="pi ${icon}"></i>
+                                ${iconHtml}
                                 <span>${name}</span>
                             </div>
                         `;
@@ -681,8 +686,17 @@ function handleDragStart(e) {
             gap: 8px;
             z-index: 1000;
         `;
-        dragImage.innerHTML = `<i class="pi pi-file" style="color: #28a745;"></i>${fileItem.dataset.name}`;
-        
+        dragImage.innerHTML = '';
+        const dragIcon = document.createElement('span');
+        dragIcon.className = 'workflow-icon-inline';
+        dragIcon.style.backgroundImage = `url('${WORKFLOW_FILE_ICON_PATH}')`;
+        dragIcon.setAttribute('aria-hidden', 'true');
+        dragImage.appendChild(dragIcon);
+
+        const dragLabel = document.createElement('span');
+        dragLabel.textContent = fileItem.dataset.name;
+        dragImage.appendChild(dragLabel);
+
         document.body.appendChild(dragImage);
         e.dataTransfer.setDragImage(dragImage, 20, 20);
         
