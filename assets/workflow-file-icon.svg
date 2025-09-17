@@ -1,0 +1,19 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Workflow file icon</title>
+  <desc id="desc">Blue square icon with chinese character Jing representing a workflow file.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4ad9ff" />
+      <stop offset="100%" stop-color="#0a6cff" />
+    </linearGradient>
+    <linearGradient id="highlight" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="200" height="200" rx="28" fill="url(#bg)" />
+  <path d="M36 20h54c20 0 36 16 36 36v4c0 20-16 36-36 36H36z" fill="#ffffff" opacity="0.2" />
+  <path d="M40 36h46c14 0 26 12 26 26v4c0 14-12 26-26 26H40z" fill="#ffffff" opacity="0.12" />
+  <path d="M28 120h64c28 0 48 20 48 48v12H28z" fill="url(#highlight)" opacity="0.45" />
+  <text x="136" y="142" font-size="112" font-family="'Noto Sans CJK SC','Microsoft YaHei','PingFang SC','Heiti SC','sans-serif'" font-weight="700" fill="#ffffff" text-anchor="middle">境</text>
+</svg>

@@ -1,6 +1,8 @@
 // js/workflow_styles.js
 // 样式定义和UI组件
 
+import { WORKFLOW_FILE_ICON_PATH } from './workflow_state.js';
+
 // 添加管理器样式
 function addManagerStyles() {
     if (document.querySelector('#workflow-manager-styles')) return;
@@ -197,17 +199,29 @@ function addManagerStyles() {
         }
         
         .file-icon {
-            font-size: 48px;
             margin-bottom: 6px;
             color: #007acc;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            flex-shrink: 0;
         }
-        
+
         .file-icon.folder {
             color: #ffa500;
         }
-        
+
         .file-icon.workflow {
-            color: #28a745;
+            width: 48px;
+            height: 48px;
+            margin-bottom: 6px;
+            background-image: url('${WORKFLOW_FILE_ICON_PATH}');
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: contain;
+            font-size: 0;
+            color: transparent;
         }
         
         /* 预览图相关样式 */
@@ -246,6 +260,11 @@ function addManagerStyles() {
             font-size: 20px;
             margin-bottom: 0;
             margin-right: 12px;
+        }
+
+        .file-grid.list-view .file-icon.workflow {
+            width: 24px;
+            height: 24px;
         }
         
         .preview-loading {
@@ -309,6 +328,24 @@ function addManagerStyles() {
             object-position: center;
             border-radius: 4px;
             transform-origin: center;
+        }
+
+        .workflow-icon-inline {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+            background-image: url('${WORKFLOW_FILE_ICON_PATH}');
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: contain;
+            vertical-align: middle;
+        }
+
+        .workflow-icon-inline.small {
+            width: 16px;
+            height: 16px;
+            margin-right: 6px;
         }
         
         .file-name {
